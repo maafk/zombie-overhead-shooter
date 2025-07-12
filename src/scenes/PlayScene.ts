@@ -11,7 +11,6 @@ const WeaponType = {
 
 export class PlayScene extends Scene {
   private player!: Phaser.GameObjects.Sprite;
-  private playerDirection!: Phaser.GameObjects.Rectangle;
   private zombies!: Phaser.Physics.Arcade.Group;
   private bullets!: Phaser.Physics.Arcade.Group;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -21,7 +20,6 @@ export class PlayScene extends Scene {
   private isPaused = false;
   private pauseText!: Phaser.GameObjects.Text;
   private lastShotTime = 0;
-  private shotCooldown = 200; // milliseconds
   private score = 0;
   private scoreText!: Phaser.GameObjects.Text;
   private weaponText!: Phaser.GameObjects.Text;
@@ -74,9 +72,6 @@ export class PlayScene extends Scene {
     // Optional: use a small circular body
     (this.player.body as Phaser.Physics.Arcade.Body).setCircle(this.player.width * 0.25);
 
-    // Remove the old arrow indicator, we will rotate the player sprite itself
-    this.playerDirection = this.add.rectangle(0, 0, 0, 0, 0x000000, 0); // hidden placeholder to keep rest of code
-   
     // Create groups for zombies and bullets
     this.zombies = this.physics.add.group();
     this.bullets = this.physics.add.group();
@@ -558,12 +553,12 @@ export class PlayScene extends Scene {
     }
   }
 
-  private playerHitZombie(player: any, zombie: any) {
+  private playerHitZombie(_player: any, zombie: any) {
     const isBoss = (zombie as Phaser.GameObjects.Sprite).getData('isBoss');
     const damageToPlayer = isBoss ? 15 : 20;
 
     // Apply damage to zombie (may or may not be destroyed)
-    const destroyed = this.damageZombie(zombie as Phaser.GameObjects.Sprite, damageToPlayer);
+    this.damageZombie(zombie as Phaser.GameObjects.Sprite, damageToPlayer);
     // Damage player regardless
     this.applyDamage(damageToPlayer);
   }
@@ -639,7 +634,7 @@ export class PlayScene extends Scene {
     }
   }
 
-  private playerHitEnemyBullet(player: any, bullet: any) {
+  private playerHitEnemyBullet(_player: any, bullet: any) {
     bullet.destroy();
     const damage = bullet.getData && bullet.getData('isBossBullet') ? 15 : 10;
     this.applyDamage(damage);
@@ -653,7 +648,7 @@ export class PlayScene extends Scene {
     this.medkits.add(medkit);
   }
 
-  private playerTouchMedkit(player: any, medkit: any) {
+  private playerTouchMedkit(_player: any, medkit: any) {
     medkit.destroy();
 
     this.playerHealth = Math.min(this.playerHealth + 20, this.playerMaxHealth);
