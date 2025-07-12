@@ -5,7 +5,8 @@ const WeaponType = {
   SPREAD: 1,
   THICK: 2,
   RING: 3,
-  SOLID_RING: 4
+  SOLID_RING: 4,
+  BOUNCY: 5
 } as const;
 
 export class PlayScene extends Scene {
@@ -16,6 +17,9 @@ export class PlayScene extends Scene {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private spaceKey!: Phaser.Input.Keyboard.Key;
   private numberKeys!: { [key: number]: Phaser.Input.Keyboard.Key };
+  private pauseKey!: Phaser.Input.Keyboard.Key;
+  private isPaused = false;
+  private pauseText!: Phaser.GameObjects.Text;
   private lastShotTime = 0;
   private shotCooldown = 200; // milliseconds
   private score = 0;
@@ -26,6 +30,20 @@ export class PlayScene extends Scene {
   private playerMaxHealth = 100;
   private playerHealth = 100;
   private healthBar!: Phaser.GameObjects.Graphics;
+  // --- Shield related ---
+  private playerMaxShield = 100;
+  private playerShield = 0;
+  private shieldBar!: Phaser.GameObjects.Graphics;
+
+  // Track zombie kills to grant shield every 20 kills
+  private zombieKillCount = 0;
+
+  // --- Boss related ---
+  private bossSpawned = false;
+  private bossHealthBar!: Phaser.GameObjects.Graphics;
+
+  // Unlockable weapons
+  private bouncyUnlocked = false;
   private enemyBullets!: Phaser.Physics.Arcade.Group;
   private gunnerSpawnCounter = 0;
   private gunnerSpawnThreshold = Phaser.Math.Between(15, 20);
@@ -70,6 +88,7 @@ export class PlayScene extends Scene {
     // Initialize input
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.spaceKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.pauseKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     
     // Initialize number keys for weapon selection
     this.numberKeys = {
@@ -77,7 +96,8 @@ export class PlayScene extends Scene {
       2: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
       3: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
       4: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR),
-      5: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FIVE)
+      5: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FIVE),
+      6: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SIX)
     };
 
     // Create score text
@@ -95,7 +115,12 @@ export class PlayScene extends Scene {
     // Reset health on (re)start and create health bar
     this.playerHealth = this.playerMaxHealth;
     this.healthBar = this.add.graphics();
+    // Initialize shield graphics
+    this.playerShield = 0;
+    this.shieldBar = this.add.graphics();
     this.updateHealthBar();
+
+    // Note: Boss will spawn dynamically after 100 kills; no immediate spawn at create.
 
     // Set up collision detection
     this.physics.add.overlap(this.bullets, this.zombies, this.bulletHitZombie, undefined, this);
@@ -112,9 +137,30 @@ export class PlayScene extends Scene {
       callbackScope: this,
       loop: true
     });
+
+    // Pause overlay text (hidden initially)
+    this.pauseText = this.add.text(this.cameras.main.width / 2, this.cameras.main.height / 2, 'PAUSED', {
+      fontSize: '48px',
+      color: '#ffffff'
+    }).setOrigin(0.5);
+    this.pauseText.setVisible(false);
   }
 
   update() {
+    // Toggle pause
+    if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) {
+      this.isPaused = !this.isPaused;
+      if (this.isPaused) {
+        this.pauseGame();
+      } else {
+        this.resumeGame();
+      }
+    }
+
+    if (this.isPaused) {
+      return; // Skip rest of update while paused
+    }
+
     // Player movement and facing direction with arrow keys
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     playerBody.setVelocity(0);
@@ -176,6 +222,13 @@ export class PlayScene extends Scene {
       this.weaponText.setText('Weapon: Solid Ring (5)');
     }
 
+    if (Phaser.Input.Keyboard.JustDown(this.numberKeys[6])) {
+      if (this.bouncyUnlocked) {
+        this.currentWeapon = WeaponType.BOUNCY;
+        this.weaponText.setText('Weapon: Bouncy (6)');
+      }
+    }
+
     // Shooting with spacebar
     const currentCooldown = this.getWeaponCooldown();
     if (this.spaceKey.isDown && this.time.now - this.lastShotTime > currentCooldown) {
@@ -188,7 +241,7 @@ export class PlayScene extends Scene {
       const zombieGO = zombie as Phaser.GameObjects.Sprite;
       const zombieBody = zombie.body as Phaser.Physics.Arcade.Body;
 
-      if (zombieGO.getData('isGunner')) {
+      if (zombieGO.getData('isGunner') && !zombieGO.getData('isBoss')) {
         // Ensure gunners remain stationary
         zombieBody.setVelocity(0, 0);
         return;
@@ -234,6 +287,36 @@ export class PlayScene extends Scene {
         bullet.destroy();
       }
     });
+
+    // --- Boss orbit update ---
+    this.zombies.children.entries.forEach((zombie) => {
+      const boss = zombie as Phaser.GameObjects.Sprite;
+      if (!boss.getData('isBoss')) return;
+
+      const dt = this.game.loop.delta / 1000; // seconds
+      let angle: number = boss.getData('orbitAngle');
+      const speed: number = boss.getData('orbitSpeed');
+      const radius: number = boss.getData('orbitRadius');
+
+      angle += speed * dt;
+      boss.setData('orbitAngle', angle);
+
+      const centerX = this.cameras.main.width / 2;
+      const centerY = this.cameras.main.height / 2;
+
+      boss.x = centerX + Math.cos(angle) * radius;
+      boss.y = centerY + Math.sin(angle) * radius;
+
+      // Ensure physics body follows sprite
+      const bbody = boss.body as Phaser.Physics.Arcade.Body;
+      bbody.x = boss.x - bbody.width / 2;
+      bbody.y = boss.y - bbody.height / 2;
+    });
+
+    // Refresh boss health bar display each frame
+    if (this.bossSpawned) {
+      this.updateBossHealthBar();
+    }
   }
 
   private spawnZombie() {
@@ -308,6 +391,9 @@ export class PlayScene extends Scene {
         break;
       case WeaponType.SOLID_RING:
         this.shootSolidRing();
+        break;
+      case WeaponType.BOUNCY:
+        this.shootBouncy();
         break;
     }
   }
@@ -415,11 +501,12 @@ export class PlayScene extends Scene {
           // We check if zombie is between previous radius and current radius
           if (distance <= currentRadius && distance >= previousRadius - 10) {
             hitZombies.add(zombie);
-            zombie.destroy();
-            
-            // Increase score
-            this.score += 10;
-            this.scoreText.setText('Score: ' + this.score);
+            this.damageZombie(zombieGO, 20);
+            if (!zombieGO.active) {
+              // zombie was destroyed
+              this.score += 10;
+              this.scoreText.setText('Score: ' + this.score);
+            }
           }
         });
         
@@ -443,6 +530,8 @@ export class PlayScene extends Scene {
         return 1000; // Much slower for ring burst
       case WeaponType.SOLID_RING:
         return 800; // Slower for solid ring
+      case WeaponType.BOUNCY:
+        return 300; // Moderate fire rate
       default:
         return 200;
     }
@@ -450,22 +539,33 @@ export class PlayScene extends Scene {
 
   private bulletHitZombie(bullet: any, zombie: any) {
     // Remove only the zombie, let bullet continue through
-    zombie.destroy();
-    
-    // Increase score
-    this.score += 10;
-    this.scoreText.setText('Score: ' + this.score);
+    const destroyed = this.damageZombie(zombie as Phaser.GameObjects.Sprite, 20);
+    if (destroyed) {
+      // Increase score
+      this.score += 10;
+      this.scoreText.setText('Score: ' + this.score);
+    }
+
+    // Handle bouncy bullet hit counts
+    if (bullet.getData && bullet.getData('isBouncy')) {
+      let hits = bullet.getData('hits') || 0;
+      hits += 1;
+      if (hits >= 5) {
+        bullet.destroy();
+      } else {
+        bullet.setData('hits', hits);
+      }
+    }
   }
 
   private playerHitZombie(player: any, zombie: any) {
-    zombie.destroy();
+    const isBoss = (zombie as Phaser.GameObjects.Sprite).getData('isBoss');
+    const damageToPlayer = isBoss ? 15 : 20;
 
-    this.playerHealth -= 20; // Damage amount per hit
-    this.updateHealthBar();
-
-    if (this.playerHealth <= 0) {
-      this.scene.restart();
-    }
+    // Apply damage to zombie (may or may not be destroyed)
+    const destroyed = this.damageZombie(zombie as Phaser.GameObjects.Sprite, damageToPlayer);
+    // Damage player regardless
+    this.applyDamage(damageToPlayer);
   }
 
   private updateHealthBar() {
@@ -475,15 +575,24 @@ export class PlayScene extends Scene {
     const height = 20;
 
     this.healthBar.clear();
+    this.shieldBar.clear();
 
-    // Draw background
+    // Draw background for both bars
     this.healthBar.fillStyle(0x444444, 1);
     this.healthBar.fillRect(x, y, width, height);
+    this.shieldBar.fillStyle(0x444444, 1);
+    const shieldX = x + width + 10; // 10px gap between bars
+    this.shieldBar.fillRect(shieldX, y, width, height);
 
-    // Draw health fill
+    // Draw health fill (red)
     const healthPercent = Phaser.Math.Clamp(this.playerHealth / this.playerMaxHealth, 0, 1);
     this.healthBar.fillStyle(0xff0000, 1);
     this.healthBar.fillRect(x, y, width * healthPercent, height);
+
+    // Draw shield fill (blue)
+    const shieldPercent = Phaser.Math.Clamp(this.playerShield / this.playerMaxShield, 0, 1);
+    this.shieldBar.fillStyle(0x0000ff, 1);
+    this.shieldBar.fillRect(shieldX, y, width * shieldPercent, height);
   }
 
   // --- Gunner zombie helpers ---
@@ -523,17 +632,17 @@ export class PlayScene extends Scene {
 
     const body = bullet.body as Phaser.Physics.Arcade.Body;
     body.setVelocity((dx / distance) * bulletSpeed, (dy / distance) * bulletSpeed);
+
+    // Mark bullet if fired by boss for extra damage
+    if (gunner.getData('isBoss')) {
+      bullet.setData('isBossBullet', true);
+    }
   }
 
   private playerHitEnemyBullet(player: any, bullet: any) {
     bullet.destroy();
-
-    this.playerHealth -= 10; // Damage per gunner bullet
-    this.updateHealthBar();
-
-    if (this.playerHealth <= 0) {
-      this.scene.restart();
-    }
+    const damage = bullet.getData && bullet.getData('isBossBullet') ? 15 : 10;
+    this.applyDamage(damage);
   }
 
   // --- Medkit helpers ---
@@ -549,5 +658,243 @@ export class PlayScene extends Scene {
 
     this.playerHealth = Math.min(this.playerHealth + 20, this.playerMaxHealth);
     this.updateHealthBar();
+  }
+
+  // --- Helper methods ---
+
+  /**
+   * Apply damage to the player, depleting shield first and then health.
+   */
+  private applyDamage(amount: number) {
+    if (this.playerShield > 0) {
+      const shieldDamage = Math.min(amount, this.playerShield);
+      this.playerShield -= shieldDamage;
+      amount -= shieldDamage;
+    }
+    if (amount > 0) {
+      this.playerHealth -= amount;
+    }
+
+    this.updateHealthBar();
+
+    if (this.playerHealth <= 0) {
+      this.scene.restart();
+    }
+  }
+
+  /**
+   * Increment kill count and grant shield every 20 kills.
+   */
+  private incrementKillCount() {
+    this.zombieKillCount += 1;
+
+    if (this.zombieKillCount % 20 === 0) {
+      this.playerShield = Math.min(this.playerShield + 20, this.playerMaxShield);
+      this.updateHealthBar();
+    }
+
+    // Spawn boss after first 100 kills
+    if (!this.bossSpawned && this.zombieKillCount >= 100) {
+      this.spawnBoss();
+    }
+  }
+
+  /**
+   * Damage a zombie, supporting bosses with health. Returns true if zombie was destroyed.
+   */
+  private damageZombie(zombie: Phaser.GameObjects.Sprite, amount: number): boolean {
+    if (zombie.getData('isBoss')) {
+      let health: number = zombie.getData('health');
+      health -= amount;
+      if (health <= 0) {
+        this.killBoss(zombie);
+        return true;
+      } else {
+        zombie.setData('health', health);
+        return false;
+      }
+    }
+
+    // Regular zombie
+    zombie.destroy();
+    this.incrementKillCount();
+    return true;
+  }
+
+  /** Spawn the boss zombie */
+  private spawnBoss() {
+    this.bossSpawned = true;
+
+    // Spawn at screen edge similar to regular spawn
+    const screenWidth = this.cameras.main.width;
+    const screenHeight = this.cameras.main.height;
+    const side = Phaser.Math.Between(0, 3);
+    let x: number, y: number;
+    switch (side) {
+      case 0: // top
+        x = Phaser.Math.Between(0, screenWidth);
+        y = -30;
+        break;
+      case 1: // right
+        x = screenWidth + 30;
+        y = Phaser.Math.Between(0, screenHeight);
+        break;
+      case 2: // bottom
+        x = Phaser.Math.Between(0, screenWidth);
+        y = screenHeight + 30;
+        break;
+      case 3: // left
+      default:
+        x = -30;
+        y = Phaser.Math.Between(0, screenHeight);
+        break;
+    }
+
+    const boss = this.physics.add.sprite(x, y, 'gunner');
+    boss.setScale(1.2); // bigger for emphasis
+    boss.setVisible(true);
+    boss.setAlpha(1);
+    boss.setDepth(5); // render above other zombies
+
+    this.zombies.add(boss);
+
+    boss.setData('isGunner', true);
+    boss.setData('isBoss', true);
+    boss.setData('health', 150);
+
+    // Orbit params
+    const orbitRadius = Math.min(screenWidth, screenHeight) / 2 - 60;
+    boss.setData('orbitRadius', orbitRadius);
+    boss.setData('orbitAngle', Phaser.Math.FloatBetween(0, Math.PI * 2));
+    boss.setData('orbitSpeed', 0.6); // radians per second
+
+    // Start faster shooting (1.5x faster => 667ms)
+    const shootTimer = this.time.addEvent({
+      delay: 667,
+      callback: () => this.gunnerShoot(boss),
+      loop: true
+    });
+    boss.setData('shootTimer', shootTimer);
+
+    // Clean up timer on destroy
+    boss.on('destroy', () => {
+      const timer: Phaser.Time.TimerEvent | undefined = boss.getData('shootTimer');
+      if (timer) timer.remove(false);
+    });
+  }
+
+  /** Handle killing the boss and reward player */
+  private killBoss(boss: Phaser.GameObjects.Sprite) {
+    boss.destroy();
+
+    // Remove boss health bar
+    if (this.bossHealthBar) {
+      this.bossHealthBar.destroy();
+    }
+
+    // Increase shield capacity
+    this.playerMaxShield = 150;
+    // Keep current shield amount, just ensure not exceeding new max
+    this.playerShield = Math.min(this.playerShield, this.playerMaxShield);
+    this.updateHealthBar();
+
+    // Unlock bouncy weapon
+    this.bouncyUnlocked = true;
+
+    // Notify player
+    this.weaponText.setText('Weapon unlocked! Press 6 for Bouncy Gun');
+
+    // Reward score
+    this.score += 100;
+    this.scoreText.setText('Score: ' + this.score);
+
+    // Increment kill counter for shield cycle logic
+    this.incrementKillCount();
+  }
+
+  private updateBossHealthBar() {
+    if (!this.bossHealthBar) {
+      this.bossHealthBar = this.add.graphics();
+    }
+
+    // Find boss sprite
+    const boss = this.zombies.getChildren().find(z => (z as Phaser.GameObjects.Sprite).getData('isBoss')) as Phaser.GameObjects.Sprite | undefined;
+
+    if (!boss || !boss.active) {
+      // Boss not present; hide bar
+      this.bossHealthBar.clear();
+      return;
+    }
+
+    const health: number = boss.getData('health');
+    const maxHealth = 150;
+
+    const barWidth = 300;
+    const barHeight = 20;
+    const x = (this.cameras.main.width - barWidth) / 2;
+    const y = 20;
+
+    const healthPercent = Phaser.Math.Clamp(health / maxHealth, 0, 1);
+
+    this.bossHealthBar.clear();
+    this.bossHealthBar.fillStyle(0x444444, 1);
+    this.bossHealthBar.fillRect(x, y, barWidth, barHeight);
+    this.bossHealthBar.fillStyle(0xffaa00, 1);
+    this.bossHealthBar.fillRect(x, y, barWidth * healthPercent, barHeight);
+  }
+
+  private shootBouncy() {
+    const bulletSpeed = 500;
+    const bullet = this.add.circle(this.player.x, this.player.y, 5, 0x00ffff); // cyan ball
+    this.physics.add.existing(bullet);
+    this.bullets.add(bullet);
+
+    const body = bullet.body as Phaser.Physics.Arcade.Body;
+    body.setVelocity(
+      Math.cos(this.facingAngle) * bulletSpeed,
+      Math.sin(this.facingAngle) * bulletSpeed
+    );
+    body.setBounce(1, 1);
+    body.setCollideWorldBounds(true);
+    body.onWorldBounds = true;
+
+    bullet.setData('isBouncy', true);
+    bullet.setData('hits', 0);
+  }
+
+  // --- Pause helpers ---
+  private pauseGame() {
+    this.physics.world.pause();
+    // Pause all timers
+    this.time.paused = true;
+    this.pauseText.setVisible(true);
+    this.saveGame();
+  }
+
+  private resumeGame() {
+    this.physics.world.resume();
+    this.time.paused = false;
+    this.pauseText.setVisible(false);
+  }
+
+  private saveGame() {
+    const boss = this.zombies.getChildren().find(z => (z as Phaser.GameObjects.Sprite).getData('isBoss')) as Phaser.GameObjects.Sprite | undefined;
+
+    const data = {
+      score: this.score,
+      playerHealth: this.playerHealth,
+      playerShield: this.playerShield,
+      playerMaxShield: this.playerMaxShield,
+      zombieKillCount: this.zombieKillCount,
+      bouncyUnlocked: this.bouncyUnlocked,
+      bossSpawned: this.bossSpawned,
+      bossHealth: boss ? boss.getData('health') : null
+    };
+
+    try {
+      localStorage.setItem('save1', JSON.stringify(data));
+    } catch (e) {
+      console.warn('Save failed', e);
+    }
   }
 }
