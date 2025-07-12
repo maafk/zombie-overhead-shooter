@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/muh-game/',
+  base: '/zombie-overhead-shooter/',
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
