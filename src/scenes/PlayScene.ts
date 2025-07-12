@@ -26,6 +26,10 @@ export class PlayScene extends Scene {
   private playerMaxHealth = 100;
   private playerHealth = 100;
   private healthBar!: Phaser.GameObjects.Graphics;
+  private enemyBullets!: Phaser.Physics.Arcade.Group;
+  private gunnerSpawnCounter = 0;
+  private gunnerSpawnThreshold = Phaser.Math.Between(15, 20);
+  private medkits!: Phaser.Physics.Arcade.Group;
 
   constructor() {
     super("play");
@@ -37,6 +41,8 @@ export class PlayScene extends Scene {
     this.load.image('zombie', 'zombie.png');
     // Load hero sprite
     this.load.image('hero', 'hero.png');
+    // Load gunner zombie sprite
+    this.load.image('gunner', 'gunner.png');
   }
 
   create() {
@@ -56,6 +62,10 @@ export class PlayScene extends Scene {
     // Create groups for zombies and bullets
     this.zombies = this.physics.add.group();
     this.bullets = this.physics.add.group();
+    // Group for bullets fired by gunner zombies
+    this.enemyBullets = this.physics.add.group();
+    // Group for medkits dropped by gunners
+    this.medkits = this.physics.add.group();
 
     // Initialize input
     this.cursors = this.input.keyboard!.createCursorKeys();
@@ -90,6 +100,10 @@ export class PlayScene extends Scene {
     // Set up collision detection
     this.physics.add.overlap(this.bullets, this.zombies, this.bulletHitZombie, undefined, this);
     this.physics.add.overlap(this.player, this.zombies, this.playerHitZombie, undefined, this);
+    // Damage player when hit by enemy bullets (from gunners)
+    this.physics.add.overlap(this.player, this.enemyBullets, this.playerHitEnemyBullet, undefined, this);
+    // Heal player when touching medkit
+    this.physics.add.overlap(this.player, this.medkits, this.playerTouchMedkit, undefined, this);
 
     // Spawn zombies periodically
     this.time.addEvent({
@@ -169,16 +183,22 @@ export class PlayScene extends Scene {
       this.lastShotTime = this.time.now;
     }
 
-    // Move zombies toward player
+    // Move zombies toward player (gunners stay stationary)
     this.zombies.children.entries.forEach((zombie) => {
       const zombieGO = zombie as Phaser.GameObjects.Sprite;
       const zombieBody = zombie.body as Phaser.Physics.Arcade.Body;
-      
+
+      if (zombieGO.getData('isGunner')) {
+        // Ensure gunners remain stationary
+        zombieBody.setVelocity(0, 0);
+        return;
+      }
+
       // Calculate direction from zombie to player
       const dx = this.player.x - zombieGO.x;
       const dy = this.player.y - zombieGO.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      
+
       if (distance > 0) {
         const speed = 100;
         zombieBody.setVelocity(
@@ -188,13 +208,29 @@ export class PlayScene extends Scene {
       }
     });
 
-    // Clean up bullets that go off screen
+    // Clean up player bullets that go off screen
     this.bullets.children.entries.forEach((bullet) => {
       const bulletGO = bullet as Phaser.GameObjects.Arc;
       const screenWidth = this.cameras.main.width;
       const screenHeight = this.cameras.main.height;
       
       if (bulletGO.x < -50 || bulletGO.x > screenWidth + 50 || bulletGO.y < -50 || bulletGO.y > screenHeight + 50) {
+        bullet.destroy();
+      }
+    });
+
+    // Clean up enemy bullets that go off screen
+    this.enemyBullets.children.entries.forEach((bullet) => {
+      const bulletGO = bullet as Phaser.GameObjects.Arc;
+      const screenWidth = this.cameras.main.width;
+      const screenHeight = this.cameras.main.height;
+
+      if (
+        bulletGO.x < -50 ||
+        bulletGO.x > screenWidth + 50 ||
+        bulletGO.y < -50 ||
+        bulletGO.y > screenHeight + 50
+      ) {
         bullet.destroy();
       }
     });
@@ -226,11 +262,34 @@ export class PlayScene extends Scene {
         break;
     }
 
-    // Create zombie sprite
-    const zombie = this.physics.add.sprite(x!, y!, 'zombie');
-    zombie.setScale(0.5); // down-scale large sprites if needed
-    (zombie.body as Phaser.Physics.Arcade.Body).setCircle(zombie.width * 0.25); // circular body
-    this.zombies.add(zombie);
+    // Determine whether to spawn a gunner or normal zombie
+    this.gunnerSpawnCounter++;
+
+    if (this.gunnerSpawnCounter >= this.gunnerSpawnThreshold) {
+      // Choose a visible on-screen position for gunners
+      const gunnerX = Phaser.Math.Between(50, screenWidth - 50);
+      const gunnerY = Phaser.Math.Between(50, screenHeight - 50);
+
+      // Spawn gunner zombie with its dedicated sprite
+      const gunner = this.physics.add.sprite(gunnerX, gunnerY, 'gunner');
+      gunner.setScale(0.5);
+      (gunner.body as Phaser.Physics.Arcade.Body).setCircle(gunner.width * 0.25);
+      gunner.setData('isGunner', true);
+      this.zombies.add(gunner);
+
+      // Start shooting behavior
+      this.startGunnerShooting(gunner);
+
+      // Reset counter and choose next threshold
+      this.gunnerSpawnCounter = 0;
+      this.gunnerSpawnThreshold = Phaser.Math.Between(15, 20);
+    } else {
+      // Spawn normal moving zombie
+      const zombie = this.physics.add.sprite(x!, y!, 'zombie');
+      zombie.setScale(0.5);
+      (zombie.body as Phaser.Physics.Arcade.Body).setCircle(zombie.width * 0.25);
+      this.zombies.add(zombie);
+    }
   }
 
   private shoot() {
@@ -425,5 +484,70 @@ export class PlayScene extends Scene {
     const healthPercent = Phaser.Math.Clamp(this.playerHealth / this.playerMaxHealth, 0, 1);
     this.healthBar.fillStyle(0xff0000, 1);
     this.healthBar.fillRect(x, y, width * healthPercent, height);
+  }
+
+  // --- Gunner zombie helpers ---
+
+  private startGunnerShooting(gunner: Phaser.GameObjects.Sprite) {
+    const shootTimer = this.time.addEvent({
+      delay: 1000, // fire every second
+      callback: () => this.gunnerShoot(gunner),
+      loop: true
+    });
+
+    gunner.setData('shootTimer', shootTimer);
+
+    // Clean up timer when gunner is destroyed
+    gunner.on('destroy', () => {
+      const timer: Phaser.Time.TimerEvent | undefined = gunner.getData('shootTimer');
+      if (timer) {
+        timer.remove(false);
+      }
+      // Drop medkit on death
+      this.spawnMedkit(gunner.x, gunner.y);
+    });
+  }
+
+  private gunnerShoot(gunner: Phaser.GameObjects.Sprite) {
+    if (!gunner.active) return;
+
+    const bullet = this.add.circle(gunner.x, gunner.y, 4, 0xff0000); // red bullet
+    this.physics.add.existing(bullet);
+    this.enemyBullets.add(bullet);
+
+    const bulletSpeed = 400;
+    const dx = this.player.x - gunner.x;
+    const dy = this.player.y - gunner.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance === 0) return; // avoid divide by zero
+
+    const body = bullet.body as Phaser.Physics.Arcade.Body;
+    body.setVelocity((dx / distance) * bulletSpeed, (dy / distance) * bulletSpeed);
+  }
+
+  private playerHitEnemyBullet(player: any, bullet: any) {
+    bullet.destroy();
+
+    this.playerHealth -= 10; // Damage per gunner bullet
+    this.updateHealthBar();
+
+    if (this.playerHealth <= 0) {
+      this.scene.restart();
+    }
+  }
+
+  // --- Medkit helpers ---
+
+  private spawnMedkit(x: number, y: number) {
+    const medkit = this.add.rectangle(x, y, 16, 16, 0x00ff00);
+    this.physics.add.existing(medkit);
+    this.medkits.add(medkit);
+  }
+
+  private playerTouchMedkit(player: any, medkit: any) {
+    medkit.destroy();
+
+    this.playerHealth = Math.min(this.playerHealth + 20, this.playerMaxHealth);
+    this.updateHealthBar();
   }
 }
