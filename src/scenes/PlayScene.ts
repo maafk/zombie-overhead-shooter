@@ -9,7 +9,7 @@ const WeaponType = {
 } as const;
 
 export class PlayScene extends Scene {
-  private player!: Phaser.GameObjects.Arc;
+  private player!: Phaser.GameObjects.Sprite;
   private playerDirection!: Phaser.GameObjects.Rectangle;
   private zombies!: Phaser.Physics.Arcade.Group;
   private bullets!: Phaser.Physics.Arcade.Group;
@@ -23,29 +23,36 @@ export class PlayScene extends Scene {
   private weaponText!: Phaser.GameObjects.Text;
   private facingAngle = 0; // angle in radians, 0 = right, PI/2 = down, PI = left, -PI/2 = up
   private currentWeapon: number = WeaponType.NORMAL;
+  private playerMaxHealth = 100;
+  private playerHealth = 100;
+  private healthBar!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super("play");
   }
 
   preload() {
-    // We'll use simple colored circles for now - no external assets needed
+    // Load zombie sprite (public domain asset from Kenney Top-down Shooter pack)
+    // Place PNG at `public/zombie.png` (e.g. PNG 64×64 px) or update the path below
+    this.load.image('zombie', 'zombie.png');
+    // Load hero sprite
+    this.load.image('hero', 'hero.png');
   }
 
   create() {
-    // Create player (green circle in center of screen)
+    // Create player sprite in center of screen
     const centerX = this.cameras.main.width / 2;
     const centerY = this.cameras.main.height / 2;
-    
-    this.player = this.add.circle(centerX, centerY, 20, 0x00ff00);
-    this.physics.add.existing(this.player);
+
+    this.player = this.physics.add.sprite(centerX, centerY, 'hero');
+    this.player.setScale(0.5);
     (this.player.body as Phaser.Physics.Arcade.Body).setCollideWorldBounds(true);
+    // Optional: use a small circular body
+    (this.player.body as Phaser.Physics.Arcade.Body).setCircle(this.player.width * 0.25);
 
-    // Create direction indicator (white rectangle pointing right initially)
-    this.playerDirection = this.add.rectangle(centerX, centerY, 20, 6, 0xffffff);
-    // Set origin at left edge so it rotates around the player center
-    this.playerDirection.setOrigin(0, 0.5);
-
+    // Remove the old arrow indicator, we will rotate the player sprite itself
+    this.playerDirection = this.add.rectangle(0, 0, 0, 0, 0x000000, 0); // hidden placeholder to keep rest of code
+   
     // Create groups for zombies and bullets
     this.zombies = this.physics.add.group();
     this.bullets = this.physics.add.group();
@@ -74,6 +81,11 @@ export class PlayScene extends Scene {
       fontSize: '24px',
       color: '#ffffff'
     });
+
+    // Reset health on (re)start and create health bar
+    this.playerHealth = this.playerMaxHealth;
+    this.healthBar = this.add.graphics();
+    this.updateHealthBar();
 
     // Set up collision detection
     this.physics.add.overlap(this.bullets, this.zombies, this.bulletHitZombie, undefined, this);
@@ -125,9 +137,8 @@ export class PlayScene extends Scene {
       this.facingAngle = Math.atan2(moveY, moveX);
     }
 
-    // Update direction indicator position and rotation
-    this.playerDirection.setPosition(this.player.x, this.player.y);
-    this.playerDirection.setRotation(this.facingAngle);
+    // Rotate player sprite to face movement direction
+    this.player.setRotation(this.facingAngle);
 
     // Weapon switching with number keys
     if (Phaser.Input.Keyboard.JustDown(this.numberKeys[1])) {
@@ -160,7 +171,7 @@ export class PlayScene extends Scene {
 
     // Move zombies toward player
     this.zombies.children.entries.forEach((zombie) => {
-      const zombieGO = zombie as Phaser.GameObjects.Arc;
+      const zombieGO = zombie as Phaser.GameObjects.Sprite;
       const zombieBody = zombie.body as Phaser.Physics.Arcade.Body;
       
       // Calculate direction from zombie to player
@@ -215,9 +226,10 @@ export class PlayScene extends Scene {
         break;
     }
 
-    // Create zombie (red circle)
-    const zombie = this.add.circle(x!, y!, 15, 0xff0000);
-    this.physics.add.existing(zombie);
+    // Create zombie sprite
+    const zombie = this.physics.add.sprite(x!, y!, 'zombie');
+    zombie.setScale(0.5); // down-scale large sprites if needed
+    (zombie.body as Phaser.Physics.Arcade.Body).setCircle(zombie.width * 0.25); // circular body
     this.zombies.add(zombie);
   }
 
@@ -330,7 +342,7 @@ export class PlayScene extends Scene {
         
         // Check all zombies for collision with the expanding ring
         this.zombies.children.entries.forEach((zombie) => {
-          const zombieGO = zombie as Phaser.GameObjects.Arc;
+          const zombieGO = zombie as Phaser.GameObjects.Sprite;
           
           // Skip if already hit
           if (hitZombies.has(zombie)) return;
@@ -387,7 +399,31 @@ export class PlayScene extends Scene {
   }
 
   private playerHitZombie(player: any, zombie: any) {
-    // Game over - restart the scene
-    this.scene.restart();
+    zombie.destroy();
+
+    this.playerHealth -= 20; // Damage amount per hit
+    this.updateHealthBar();
+
+    if (this.playerHealth <= 0) {
+      this.scene.restart();
+    }
+  }
+
+  private updateHealthBar() {
+    const x = 16;
+    const y = 100;
+    const width = 200;
+    const height = 20;
+
+    this.healthBar.clear();
+
+    // Draw background
+    this.healthBar.fillStyle(0x444444, 1);
+    this.healthBar.fillRect(x, y, width, height);
+
+    // Draw health fill
+    const healthPercent = Phaser.Math.Clamp(this.playerHealth / this.playerMaxHealth, 0, 1);
+    this.healthBar.fillStyle(0xff0000, 1);
+    this.healthBar.fillRect(x, y, width * healthPercent, height);
   }
 }
