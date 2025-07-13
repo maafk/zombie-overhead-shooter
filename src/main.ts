@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { PlayScene } from './scenes/PlayScene';
+import { MenuScene } from './scenes/MenuScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -7,7 +8,7 @@ const config: Phaser.Types.Core.GameConfig = {
   height: window.innerHeight,
   backgroundColor: '#1d1d1d',
   parent: 'game',
-  scene: [PlayScene],
+  scene: [MenuScene, PlayScene],
   physics: { default: 'arcade' },
   scale: {
     mode: Phaser.Scale.RESIZE,

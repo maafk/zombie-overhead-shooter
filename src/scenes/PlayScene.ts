@@ -6,7 +6,10 @@ const WeaponType = {
   THICK: 2,
   RING: 3,
   SOLID_RING: 4,
-  BOUNCY: 5
+  BOUNCY: 5,
+  SWORD: 6,
+  SAW: 7,
+  TESLA: 8
 } as const;
 
 export class PlayScene extends Scene {
@@ -39,16 +42,44 @@ export class PlayScene extends Scene {
   // --- Boss related ---
   private bossSpawned = false;
   private bossHealthBar!: Phaser.GameObjects.Graphics;
+  private boss1Defeated = false;
+  private boss2Defeated = false;
+  private boss3Defeated = false;
+  private boss4Defeated = false;
+
+  // Second boss
+  private secondBossSpawned = false;
+  private thirdBossSpawned = false;
+  private fourthBossSpawned = false;
 
   // Unlockable weapons
   private bouncyUnlocked = false;
+  private swordUnlocked = false;
+  private sawUnlocked = false;
+  private teslaUnlocked = false;
+  private teslaPlaced = false;
   private enemyBullets!: Phaser.Physics.Arcade.Group;
   private gunnerSpawnCounter = 0;
   private gunnerSpawnThreshold = Phaser.Math.Between(15, 20);
   private medkits!: Phaser.Physics.Arcade.Group;
+  private shields!: Phaser.Physics.Arcade.Group;
+  private blockCharges = 0; // shield charges from pickup
+  private blockShieldIndicator!: Phaser.GameObjects.Sprite;
+  private pauseSaveButton?: Phaser.GameObjects.Text;
+  private slotButtons?: Phaser.GameObjects.Text[];
+  private pendingLoadSlot?: number;
 
   constructor() {
     super("play");
+  }
+
+  /** Receive data when scene starts */
+  init(data: { loadSlot?: number }) {
+    if (data && typeof data.loadSlot === 'number') {
+      this.pendingLoadSlot = data.loadSlot;
+    } else {
+      this.pendingLoadSlot = undefined;
+    }
   }
 
   preload() {
@@ -59,6 +90,19 @@ export class PlayScene extends Scene {
     this.load.image('hero', 'hero.png');
     // Load gunner zombie sprite
     this.load.image('gunner', 'gunner.png');
+    // Load second boss sprite (provide your own asset at public/boss2.png)
+    this.load.image('boss2', 'boss2.png');
+    // Load third boss sprite (place at public/boss3.png)
+    this.load.image('boss3', 'boss3.png');
+    // Load saw projectile sprite (place at public/saw.png)
+    this.load.image('saw', 'saw.png');
+    // Load sword sprite for melee weapon
+    this.load.image('sword', 'sword.png');
+    // Load shield pickup sprite
+    this.load.image('shield', 'shield.png');
+    this.load.image('boss4','boss4.png');
+    this.load.image('rock','rock.png');
+    this.load.image('tesla','tesla.png');
   }
 
   create() {
@@ -79,6 +123,8 @@ export class PlayScene extends Scene {
     this.enemyBullets = this.physics.add.group();
     // Group for medkits dropped by gunners
     this.medkits = this.physics.add.group();
+    // Group for temporary shield pickups
+    this.shields = this.physics.add.group();
 
     // Initialize input
     this.cursors = this.input.keyboard!.createCursorKeys();
@@ -92,8 +138,22 @@ export class PlayScene extends Scene {
       3: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
       4: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR),
       5: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.FIVE),
-      6: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SIX)
+      6: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SIX),
+      7: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SEVEN),
+      8: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.EIGHT),
+      9: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.NINE)
     };
+
+    // Reset score on (re)start
+    this.score = 0;
+
+    // Reset kill counters and boss flags for a fresh session
+    this.zombieKillCount = 0;
+    this.bossSpawned = false;
+    this.secondBossSpawned = false;
+    this.boss1Defeated = false;
+    this.boss2Defeated = false;
+    this.boss3Defeated = false;
 
     // Create score text
     this.scoreText = this.add.text(16, 16, 'Score: 0', {
@@ -115,6 +175,14 @@ export class PlayScene extends Scene {
     this.shieldBar = this.add.graphics();
     this.updateHealthBar();
 
+    // Shield block indicator
+    this.blockShieldIndicator = this.textures.exists('shield') ?
+      this.add.sprite(this.player.x, this.player.y, 'shield') :
+      this.add.circle(this.player.x, this.player.y, 8, 0x0000ff, 0.3) as unknown as Phaser.GameObjects.Sprite;
+    this.blockShieldIndicator.setScale(0.4);
+    this.blockShieldIndicator.setAlpha(0.6);
+    this.blockShieldIndicator.setVisible(false);
+
     // Note: Boss will spawn dynamically after 100 kills; no immediate spawn at create.
 
     // Set up collision detection
@@ -124,6 +192,8 @@ export class PlayScene extends Scene {
     this.physics.add.overlap(this.player, this.enemyBullets, this.playerHitEnemyBullet, undefined, this);
     // Heal player when touching medkit
     this.physics.add.overlap(this.player, this.medkits, this.playerTouchMedkit, undefined, this);
+    // Shield pickup
+    this.physics.add.overlap(this.player, this.shields, this.playerTouchShield, undefined, this);
 
     // Spawn zombies periodically
     this.time.addEvent({
@@ -139,6 +209,12 @@ export class PlayScene extends Scene {
       color: '#ffffff'
     }).setOrigin(0.5);
     this.pauseText.setVisible(false);
+
+    // If coming from a saved game, load it
+    if (this.pendingLoadSlot != null) {
+      this.loadGame(this.pendingLoadSlot);
+      this.pendingLoadSlot = undefined; // clear after loading
+    }
   }
 
   update() {
@@ -154,6 +230,11 @@ export class PlayScene extends Scene {
 
     if (this.isPaused) {
       return; // Skip rest of update while paused
+    }
+
+    // Check score-based Boss4 spawn
+    if(!this.fourthBossSpawned && !this.boss4Defeated && this.score >= 4000){
+      this.spawnFourthBoss();
     }
 
     // Player movement and facing direction with arrow keys
@@ -195,6 +276,12 @@ export class PlayScene extends Scene {
     // Rotate player sprite to face movement direction
     this.player.setRotation(this.facingAngle);
 
+    // Update shield indicator position/visibility
+    if(this.blockShieldIndicator){
+      this.blockShieldIndicator.setPosition(this.player.x, this.player.y);
+      this.blockShieldIndicator.setVisible(this.blockCharges>0);
+    }
+
     // Weapon switching with number keys
     if (Phaser.Input.Keyboard.JustDown(this.numberKeys[1])) {
       this.currentWeapon = WeaponType.NORMAL;
@@ -221,6 +308,27 @@ export class PlayScene extends Scene {
       if (this.bouncyUnlocked) {
         this.currentWeapon = WeaponType.BOUNCY;
         this.weaponText.setText('Weapon: Bouncy (6)');
+      }
+    }
+
+    if (Phaser.Input.Keyboard.JustDown(this.numberKeys[7])) {
+      if (this.swordUnlocked) {
+        this.currentWeapon = WeaponType.SWORD;
+        this.weaponText.setText('Weapon: Sword (7)');
+      }
+    }
+
+    if (Phaser.Input.Keyboard.JustDown(this.numberKeys[8])) {
+      if (this.sawUnlocked) {
+        this.currentWeapon = WeaponType.SAW;
+        this.weaponText.setText('Weapon: Saw (8)');
+      }
+    }
+
+    if (Phaser.Input.Keyboard.JustDown(this.numberKeys[9])) {
+      if (this.teslaUnlocked) {
+        this.currentWeapon = WeaponType.TESLA;
+        this.weaponText.setText('Weapon: Tesla Coil (9)');
       }
     }
 
@@ -288,6 +396,9 @@ export class PlayScene extends Scene {
       const boss = zombie as Phaser.GameObjects.Sprite;
       if (!boss.getData('isBoss')) return;
 
+      // If boss doesn't have orbit data, skip orbit update (new roaming boss)
+      if (boss.getData('orbitRadius') == null) return;
+
       const dt = this.game.loop.delta / 1000; // seconds
       let angle: number = boss.getData('orbitAngle');
       const speed: number = boss.getData('orbitSpeed');
@@ -308,10 +419,8 @@ export class PlayScene extends Scene {
       bbody.y = boss.y - bbody.height / 2;
     });
 
-    // Refresh boss health bar display each frame
-    if (this.bossSpawned) {
-      this.updateBossHealthBar();
-    }
+    // Refresh boss health bar display each frame if any boss exists
+    this.updateBossHealthBar();
   }
 
   private spawnZombie() {
@@ -341,9 +450,10 @@ export class PlayScene extends Scene {
     }
 
     // Determine whether to spawn a gunner or normal zombie
+    const bossAlive = this.zombies.getChildren().some(z => (z as Phaser.GameObjects.Sprite).getData('isBoss'));
     this.gunnerSpawnCounter++;
 
-    if (this.gunnerSpawnCounter >= this.gunnerSpawnThreshold) {
+    if (!bossAlive && this.gunnerSpawnCounter >= this.gunnerSpawnThreshold) {
       // Choose a visible on-screen position for gunners
       const gunnerX = Phaser.Math.Between(50, screenWidth - 50);
       const gunnerY = Phaser.Math.Between(50, screenHeight - 50);
@@ -389,6 +499,15 @@ export class PlayScene extends Scene {
         break;
       case WeaponType.BOUNCY:
         this.shootBouncy();
+        break;
+      case WeaponType.SWORD:
+        this.shootSword();
+        break;
+      case WeaponType.SAW:
+        this.shootSaw();
+        break;
+      case WeaponType.TESLA:
+        this.placeTesla();
         break;
     }
   }
@@ -497,11 +616,7 @@ export class PlayScene extends Scene {
           if (distance <= currentRadius && distance >= previousRadius - 10) {
             hitZombies.add(zombie);
             this.damageZombie(zombieGO, 20);
-            if (!zombieGO.active) {
-              // zombie was destroyed
-              this.score += 10;
-              this.scoreText.setText('Score: ' + this.score);
-            }
+            // Scoring now handled inside damageZombie
           }
         });
         
@@ -526,7 +641,13 @@ export class PlayScene extends Scene {
       case WeaponType.SOLID_RING:
         return 800; // Slower for solid ring
       case WeaponType.BOUNCY:
-        return 300; // Moderate fire rate
+        return 450; // 1.5x longer reload for bouncy gun
+      case WeaponType.SWORD:
+        return 700;
+      case WeaponType.SAW:
+        return 900;
+      case WeaponType.TESLA:
+        return 1000;
       default:
         return 200;
     }
@@ -535,11 +656,7 @@ export class PlayScene extends Scene {
   private bulletHitZombie(bullet: any, zombie: any) {
     // Remove only the zombie, let bullet continue through
     const destroyed = this.damageZombie(zombie as Phaser.GameObjects.Sprite, 20);
-    if (destroyed) {
-      // Increase score
-      this.score += 10;
-      this.scoreText.setText('Score: ' + this.score);
-    }
+    // Scoring now handled inside damageZombie
 
     // Handle bouncy bullet hit counts
     if (bullet.getData && bullet.getData('isBouncy')) {
@@ -607,8 +724,12 @@ export class PlayScene extends Scene {
       if (timer) {
         timer.remove(false);
       }
-      // Drop medkit on death
-      this.spawnMedkit(gunner.x, gunner.y);
+      // 70% medkit, 30% shield
+      if(Math.random() < 0.6){
+        this.spawnMedkit(gunner.x, gunner.y);
+      } else {
+        this.spawnShield(gunner.x, gunner.y);
+      }
     });
   }
 
@@ -636,7 +757,11 @@ export class PlayScene extends Scene {
 
   private playerHitEnemyBullet(_player: any, bullet: any) {
     bullet.destroy();
-    const damage = bullet.getData && bullet.getData('isBossBullet') ? 15 : 10;
+    let damage=10;
+    if(bullet.getData()){
+      if(bullet.getData('isBossRock')) damage=30;
+      else if(bullet.getData('isBossBullet')) damage=15;
+    }
     this.applyDamage(damage);
   }
 
@@ -648,11 +773,29 @@ export class PlayScene extends Scene {
     this.medkits.add(medkit);
   }
 
+  private spawnShield(x:number, y:number){
+    let sh: Phaser.GameObjects.Sprite|Phaser.GameObjects.Rectangle;
+    if(this.textures.exists('shield')){
+      sh = this.add.sprite(x,y,'shield');
+      sh.setScale(0.4);
+    } else {
+      sh = this.add.rectangle(x,y,8,8,0x0000ff) as any; // fallback
+    }
+    this.physics.add.existing(sh);
+    this.shields.add(sh as any);
+  }
+
   private playerTouchMedkit(_player: any, medkit: any) {
     medkit.destroy();
 
     this.playerHealth = Math.min(this.playerHealth + 20, this.playerMaxHealth);
     this.updateHealthBar();
+  }
+
+  private playerTouchShield(_player:any, shield:any){
+    shield.destroy();
+    this.blockCharges = 3;
+    this.blockShieldIndicator.setVisible(true);
   }
 
   // --- Helper methods ---
@@ -661,6 +804,14 @@ export class PlayScene extends Scene {
    * Apply damage to the player, depleting shield first and then health.
    */
   private applyDamage(amount: number) {
+    if(this.blockCharges>0){
+      this.blockCharges--;
+      if(this.blockCharges<=0){
+        this.blockShieldIndicator.setVisible(false);
+      }
+      return;
+    }
+
     if (this.playerShield > 0) {
       const shieldDamage = Math.min(amount, this.playerShield);
       this.playerShield -= shieldDamage;
@@ -673,7 +824,23 @@ export class PlayScene extends Scene {
     this.updateHealthBar();
 
     if (this.playerHealth <= 0) {
-      this.scene.restart();
+      // Record score to leaderboard then return to menu
+      this.recordScore();
+      this.scene.start('menu');
+    }
+  }
+
+  /** Add the current score to persistent leaderboard (top 5) */
+  private recordScore() {
+    try {
+      const raw = localStorage.getItem('leaderboard');
+      const list: number[] = raw ? JSON.parse(raw) : [];
+      list.push(this.score);
+      list.sort((a, b) => b - a);
+      const top5 = list.slice(0, 5);
+      localStorage.setItem('leaderboard', JSON.stringify(top5));
+    } catch (e) {
+      console.warn('Unable to update leaderboard', e);
     }
   }
 
@@ -689,8 +856,23 @@ export class PlayScene extends Scene {
     }
 
     // Spawn boss after first 100 kills
-    if (!this.bossSpawned && this.zombieKillCount >= 100) {
+    if (!this.boss1Defeated && !this.bossSpawned && this.zombieKillCount >= 100) {
       this.spawnBoss();
+    }
+
+    // Spawn second boss after 200 kills
+    if (!this.boss2Defeated && !this.secondBossSpawned && this.zombieKillCount >= 200) {
+      this.spawnSecondBoss();
+    }
+
+    // Spawn third boss after 300 kills
+    if (!this.boss3Defeated && !this.thirdBossSpawned && this.zombieKillCount >= 300) {
+      this.spawnThirdBoss();
+    }
+
+    // Spawn fourth boss when score reaches 4000
+    if (!this.boss4Defeated && !this.fourthBossSpawned && this.score >= 4000) {
+      this.spawnFourthBoss();
     }
   }
 
@@ -710,9 +892,14 @@ export class PlayScene extends Scene {
       }
     }
 
-    // Regular zombie
+    // Regular or gunner zombie
+    const isGunner = zombie.getData('isGunner') === true;
     zombie.destroy();
     this.incrementKillCount();
+
+    const points = isGunner ? 20 : 10;
+    this.score += points;
+    this.scoreText.setText('Score: ' + this.score);
     return true;
   }
 
@@ -720,30 +907,11 @@ export class PlayScene extends Scene {
   private spawnBoss() {
     this.bossSpawned = true;
 
-    // Spawn at screen edge similar to regular spawn
+    // Spawn somewhere visible on screen (like gunner does)
     const screenWidth = this.cameras.main.width;
     const screenHeight = this.cameras.main.height;
-    const side = Phaser.Math.Between(0, 3);
-    let x: number, y: number;
-    switch (side) {
-      case 0: // top
-        x = Phaser.Math.Between(0, screenWidth);
-        y = -30;
-        break;
-      case 1: // right
-        x = screenWidth + 30;
-        y = Phaser.Math.Between(0, screenHeight);
-        break;
-      case 2: // bottom
-        x = Phaser.Math.Between(0, screenWidth);
-        y = screenHeight + 30;
-        break;
-      case 3: // left
-      default:
-        x = -30;
-        y = Phaser.Math.Between(0, screenHeight);
-        break;
-    }
+    const x = Phaser.Math.Between(50, screenWidth - 50);
+    const y = Phaser.Math.Between(50, screenHeight - 50);
 
     const boss = this.physics.add.sprite(x, y, 'gunner');
     boss.setScale(1.2); // bigger for emphasis
@@ -756,12 +924,10 @@ export class PlayScene extends Scene {
     boss.setData('isGunner', true);
     boss.setData('isBoss', true);
     boss.setData('health', 150);
+    boss.setData('bossLevel', 1);
+    boss.setData('maxHealth', 150);
 
-    // Orbit params
-    const orbitRadius = Math.min(screenWidth, screenHeight) / 2 - 60;
-    boss.setData('orbitRadius', orbitRadius);
-    boss.setData('orbitAngle', Phaser.Math.FloatBetween(0, Math.PI * 2));
-    boss.setData('orbitSpeed', 0.6); // radians per second
+    // No orbiting — boss will chase the player like a regular zombie
 
     // Start faster shooting (1.5x faster => 667ms)
     const shootTimer = this.time.addEvent({
@@ -770,6 +936,15 @@ export class PlayScene extends Scene {
       loop: true
     });
     boss.setData('shootTimer', shootTimer);
+
+    // Eliminate any existing non-boss gunners so only the real boss remains visible
+    this.zombies.getChildren().forEach(child => {
+      if (child === boss) return;
+      const sprite = child as Phaser.GameObjects.Sprite;
+      if (sprite.texture.key === 'gunner' && !sprite.getData('isBoss')) {
+        sprite.destroy();
+      }
+    });
 
     // Clean up timer on destroy
     boss.on('destroy', () => {
@@ -780,6 +955,8 @@ export class PlayScene extends Scene {
 
   /** Handle killing the boss and reward player */
   private killBoss(boss: Phaser.GameObjects.Sprite) {
+    const level = boss.getData('bossLevel') || 1;
+
     boss.destroy();
 
     // Remove boss health bar
@@ -793,14 +970,33 @@ export class PlayScene extends Scene {
     this.playerShield = Math.min(this.playerShield, this.playerMaxShield);
     this.updateHealthBar();
 
-    // Unlock bouncy weapon
-    this.bouncyUnlocked = true;
+    if (level === 1) {
+      // Unlock bouncy weapon
+      this.bouncyUnlocked = true;
+      this.weaponText.setText('Weapon unlocked! Press 6 for Bouncy Gun');
+      this.score += 50;
+      this.bossSpawned = false; // boss1 defeated
+      this.boss1Defeated = true;
+    } else if(level===2){
+      this.swordUnlocked = true;
+      this.weaponText.setText('Weapon unlocked! Press 7 for Sword');
+      this.score += 70;
+      this.secondBossSpawned = false; // boss2 defeated
+      this.boss2Defeated = true;
+    } else if(level===3){
+      this.sawUnlocked = true;
+      this.weaponText.setText('Weapon unlocked! Press 8 for Saw');
+      this.score += 100;
+      this.thirdBossSpawned = false;
+      this.boss3Defeated = true;
+    } else if(level===4){
+      this.teslaUnlocked = true;
+      this.weaponText.setText('Weapon unlocked! Press 9 for Tesla Coil');
+      this.score += 100;
+      this.fourthBossSpawned = false;
+      this.boss4Defeated = true;
+    }
 
-    // Notify player
-    this.weaponText.setText('Weapon unlocked! Press 6 for Bouncy Gun');
-
-    // Reward score
-    this.score += 100;
     this.scoreText.setText('Score: ' + this.score);
 
     // Increment kill counter for shield cycle logic
@@ -822,7 +1018,7 @@ export class PlayScene extends Scene {
     }
 
     const health: number = boss.getData('health');
-    const maxHealth = 150;
+    const maxHealth = boss.getData('maxHealth') ?? 150;
 
     const barWidth = 300;
     const barHeight = 20;
@@ -838,7 +1034,127 @@ export class PlayScene extends Scene {
     this.bossHealthBar.fillRect(x, y, barWidth * healthPercent, barHeight);
   }
 
+  /** Spawn the second boss (spread-gun wielder) */
+  private spawnSecondBoss() {
+    this.secondBossSpawned = true;
+
+    const screenWidth = this.cameras.main.width;
+    const screenHeight = this.cameras.main.height;
+    const x = Phaser.Math.Between(50, screenWidth - 50);
+    const y = Phaser.Math.Between(50, screenHeight - 50);
+
+    const boss = this.physics.add.sprite(x, y, 'boss2');
+    boss.setScale(1.4);
+    boss.setDepth(5);
+    this.zombies.add(boss);
+
+    boss.setData('isBoss', true);
+    boss.setData('bossLevel', 2);
+    boss.setData('health', 200);
+    boss.setData('maxHealth', 200);
+
+    // Spread-gun shooting every 600 ms
+    const shootTimer = this.time.addEvent({
+      delay: 600,
+      callback: () => this.bossSpreadShoot(boss),
+      loop: true
+    });
+    boss.setData('shootTimer', shootTimer);
+
+    boss.on('destroy', () => {
+      const timer: Phaser.Time.TimerEvent | undefined = boss.getData('shootTimer');
+      if (timer) timer.remove(false);
+    });
+  }
+
+  /** Second boss spread-shot helper */
+  private bossSpreadShoot(boss: Phaser.GameObjects.Sprite) {
+    if (!boss.active) return;
+
+    const bulletSpeed = 450;
+    const angleToPlayer = Math.atan2(this.player.y - boss.y, this.player.x - boss.x);
+    const offsets = [-0.3, -0.15, 0, 0.15, 0.3];
+
+    offsets.forEach(off => {
+      const bullet = this.add.circle(boss.x, boss.y, 4, 0xffa500);
+      this.physics.add.existing(bullet);
+      this.enemyBullets.add(bullet);
+      const angle = angleToPlayer + off;
+      const body = bullet.body as Phaser.Physics.Arcade.Body;
+      body.setVelocity(Math.cos(angle) * bulletSpeed, Math.sin(angle) * bulletSpeed);
+      bullet.setData('isBossBullet', true);
+    });
+  }
+
+  /** Spawn third boss that uses solid ring */
+  private spawnThirdBoss() {
+    this.thirdBossSpawned = true;
+
+    const screenWidth = this.cameras.main.width;
+    const screenHeight = this.cameras.main.height;
+    const x = Phaser.Math.Between(50, screenWidth - 50);
+    const y = Phaser.Math.Between(50, screenHeight - 50);
+
+    const boss = this.physics.add.sprite(x, y, 'boss3');
+    boss.setScale(1.6);
+    boss.setDepth(5);
+    this.zombies.add(boss);
+
+    boss.setData('isBoss', true);
+    boss.setData('bossLevel', 3);
+    boss.setData('health', 250);
+    boss.setData('maxHealth', 250);
+
+    // Attack timer
+    const timer = this.time.addEvent({
+      delay: 800,
+      callback: () => this.bossSolidRingAttack(boss),
+      loop: true
+    });
+    boss.setData('shootTimer', timer);
+
+    boss.on('destroy',()=>{
+      timer.remove(false);
+    });
+  }
+
+  /** Solid ring attack damaging player */
+  private bossSolidRingAttack(boss: Phaser.GameObjects.Sprite){
+    if(!boss.active) return;
+    const ring = this.add.circle(boss.x, boss.y, 10, 0xffaaaa,0);
+    ring.setStrokeStyle(8,0xffaaaa);
+    const cx=boss.x, cy=boss.y;
+    let prev=10;
+    this.tweens.add({
+      targets:ring,
+      radius:120,
+      duration:400,
+      ease:'Power2',
+      onUpdate: ()=>{
+        const cur = ring.radius;
+        const dx=this.player.x-cx;
+        const dy=this.player.y-cy;
+        const dist=Math.sqrt(dx*dx+dy*dy);
+        if(dist<=cur && dist>=prev-10){
+          this.applyDamage(20);
+        }
+        prev=cur;
+      },
+      onComplete:()=> ring.destroy()
+    });
+  }
+
   private shootBouncy() {
+    // Limit to 10 active bouncy bullets at any given time
+    const activeBouncyCount = this.bullets.getChildren().filter(b => {
+      // Ensure object supports getData and is still active
+      return (b as any).active && (b as any).getData && (b as any).getData('isBouncy');
+    }).length;
+
+    if (activeBouncyCount >= 10) {
+      return; // Too many bouncy bullets, wait until some are destroyed
+    }
+
     const bulletSpeed = 500;
     const bullet = this.add.circle(this.player.x, this.player.y, 5, 0x00ffff); // cyan ball
     this.physics.add.existing(bullet);
@@ -863,17 +1179,63 @@ export class PlayScene extends Scene {
     // Pause all timers
     this.time.paused = true;
     this.pauseText.setVisible(true);
-    this.saveGame();
+
+    // Create Save button if not already
+    if (!this.pauseSaveButton) {
+      this.pauseSaveButton = this.add.text(this.cameras.main.width / 2, this.cameras.main.height / 2 + 60, 'SAVE', {
+        fontSize: '32px',
+        color: '#ffff00',
+        backgroundColor: '#000000',
+        padding: { left: 20, right: 20, top: 10, bottom: 10 }
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+      this.pauseSaveButton.on('pointerdown', () => this.showSaveSlots());
+    } else {
+      this.pauseSaveButton.setVisible(true);
+    }
   }
 
   private resumeGame() {
     this.physics.world.resume();
     this.time.paused = false;
     this.pauseText.setVisible(false);
+
+    // Hide pause save UI if present
+    if (this.pauseSaveButton) this.pauseSaveButton.setVisible(false);
+    if (this.slotButtons) this.slotButtons.forEach(b => b.setVisible(false));
   }
 
-  private saveGame() {
-    const boss = this.zombies.getChildren().find(z => (z as Phaser.GameObjects.Sprite).getData('isBoss')) as Phaser.GameObjects.Sprite | undefined;
+  private showSaveSlots() {
+    const cx = this.cameras.main.width / 2;
+    const cy = this.cameras.main.height / 2 + 120;
+
+    if (!this.slotButtons) {
+      this.slotButtons = [1, 2, 3].map((slot, idx) => {
+        const btn = this.add.text(cx, cy + idx * 50, `SAVE ${slot}`, {
+          fontSize: '28px',
+          color: '#ffffff',
+          backgroundColor: '#000000',
+          padding: { left: 20, right: 20, top: 5, bottom: 5 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+        btn.on('pointerdown', () => {
+          this.saveGame(slot);
+          // Go back to menu
+          this.scene.start('menu');
+        });
+        return btn;
+      });
+    } else {
+      this.slotButtons.forEach(btn => btn.setVisible(true));
+    }
+
+    if (this.pauseSaveButton) this.pauseSaveButton.setVisible(false);
+  }
+
+  private saveGame(slot: number) {
+    const key = `save${slot}`;
+    const boss1 = this.zombies.getChildren().find(z => (z as Phaser.GameObjects.Sprite).getData('bossLevel') === 1) as Phaser.GameObjects.Sprite | undefined;
+    const boss2 = this.zombies.getChildren().find(z => (z as Phaser.GameObjects.Sprite).getData('bossLevel') === 2) as Phaser.GameObjects.Sprite | undefined;
 
     const data = {
       score: this.score,
@@ -882,14 +1244,227 @@ export class PlayScene extends Scene {
       playerMaxShield: this.playerMaxShield,
       zombieKillCount: this.zombieKillCount,
       bouncyUnlocked: this.bouncyUnlocked,
-      bossSpawned: this.bossSpawned,
-      bossHealth: boss ? boss.getData('health') : null
+      swordUnlocked: this.swordUnlocked,
+      sawUnlocked: this.sawUnlocked,
+      boss1Alive: !!boss1,
+      boss1Health: boss1 ? boss1.getData('health') : null,
+      boss2Alive: !!boss2,
+      boss2Health: boss2 ? boss2.getData('health') : null,
+      boss1Defeated: this.boss1Defeated,
+      boss2Defeated: this.boss2Defeated,
+      boss3Defeated: this.boss3Defeated,
+      boss4Defeated: this.boss4Defeated
     };
 
     try {
-      localStorage.setItem('save1', JSON.stringify(data));
+      localStorage.setItem(key, JSON.stringify(data));
     } catch (e) {
       console.warn('Save failed', e);
     }
+  }
+
+  /** Load from a given slot */
+  private loadGame(slot: number) {
+    const key = `save${slot}`;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+
+      this.score = data.score ?? 0;
+      this.scoreText.setText('Score: ' + this.score);
+
+      this.playerHealth = data.playerHealth ?? this.playerMaxHealth;
+      this.playerShield = data.playerShield ?? 0;
+      this.playerMaxShield = data.playerMaxShield ?? 100;
+      this.zombieKillCount = data.zombieKillCount ?? 0;
+      this.bouncyUnlocked = data.bouncyUnlocked ?? false;
+      this.swordUnlocked = data.swordUnlocked ?? false;
+      this.sawUnlocked = data.sawUnlocked ?? false;
+      this.boss1Defeated = data.boss1Defeated ?? false;
+      this.boss2Defeated = data.boss2Defeated ?? false;
+      this.boss3Defeated = data.boss3Defeated ?? false;
+      this.boss4Defeated = data.boss4Defeated ?? false;
+
+      this.updateHealthBar();
+
+      if (data.boss1Alive) {
+        this.spawnBoss();
+        const boss = this.zombies.getChildren().find(z => (z as Phaser.GameObjects.Sprite).getData('bossLevel') === 1) as Phaser.GameObjects.Sprite | undefined;
+        if (boss) boss.setData('health', data.boss1Health ?? 150);
+      }
+
+      if (data.boss2Alive) {
+        this.spawnSecondBoss();
+        const boss2 = this.zombies.getChildren().find(z => (z as Phaser.GameObjects.Sprite).getData('bossLevel') === 2) as Phaser.GameObjects.Sprite | undefined;
+        if (boss2) boss2.setData('health', data.boss2Health ?? 200);
+      }
+      this.pendingLoadSlot = undefined;
+    } catch (e) {
+      console.warn('Load failed', e);
+    }
+  }
+
+  /** Sword swing attack */
+  private shootSword() {
+    const reach = 90; // smaller sword reach
+    let sword: Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Alpha;
+    if (this.textures.exists('sword')) {
+      sword = this.add.sprite(this.player.x, this.player.y, 'sword');
+      (sword as Phaser.GameObjects.Sprite).setOrigin(0, 0.5);
+      (sword as Phaser.GameObjects.Sprite).setScale(reach / (sword as Phaser.GameObjects.Sprite).width, 1);
+    } else {
+      // Fallback grey rectangle if texture missing
+      sword = this.add.rectangle(this.player.x, this.player.y, reach, 10, 0x999999) as any; // fallback
+      (sword as any).setOrigin?.(0, 0.5);
+    }
+    (sword as any).setDepth?.(3);
+    (sword as any).setAlpha?.(1);
+
+    // Starting angle (swing back) and end angle (swing forward)
+    const swingRange = Math.PI / 1.5; // 120 deg total
+    const startAngle = this.facingAngle - swingRange / 2;
+    const endAngle = this.facingAngle + swingRange / 2;
+    (sword as any).setRotation?.(startAngle);
+
+    const hitZombies = new Set<Phaser.GameObjects.Sprite>();
+    const doHitCheck = () => {
+      const currentAngle = (sword as any).rotation ?? this.facingAngle;
+      this.zombies.children.entries.forEach(child => {
+        const zombie = child as Phaser.GameObjects.Sprite;
+        if (!zombie.active || hitZombies.has(zombie)) return;
+        const dx = zombie.x - this.player.x;
+        const dy = zombie.y - this.player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > reach) return;
+
+        const angleToZombie = Math.atan2(dy, dx);
+        const diff = Phaser.Math.Angle.Wrap(angleToZombie - currentAngle);
+        // allow 40 deg to either side of blade (narrower than sweep)
+        if (Math.abs(diff) <= Math.PI / 4) {
+          hitZombies.add(zombie);
+          const damage = zombie.getData('isBoss') ? 30 : 25;
+          this.damageZombie(zombie, damage);
+        }
+      });
+    };
+
+    doHitCheck(); // initial
+ 
+    // Visual swing tween (rotate and fade)
+    this.tweens.add({
+      targets: sword,
+      rotation: endAngle,
+      alpha: 0,
+      duration: 200,
+      ease: 'Cubic.Out',
+      onUpdate: doHitCheck,
+      onComplete: () => {
+        sword.destroy();
+      }
+    });
+  }
+
+  /** Saw weapon orbiting around player */
+  private shootSaw(){
+    if(this.bullets.getChildren().some(b=>(b as any).getData?.('isSaw'))) return; // one saw at a time
+    const saw=this.add.sprite(this.player.x,this.player.y,'saw');
+    this.physics.add.existing(saw);
+    this.bullets.add(saw);
+    saw.setData('isSaw',true);
+
+    const orbitRadius=100;
+    let angle=0;
+    const rotateSpeed=2*Math.PI; //rad per sec
+    saw.setOrigin(0.5);
+
+    saw.update=()=>{};
+    this.events.on('update',()=>{
+      if(!saw.active) return;
+      angle+=rotateSpeed*this.game.loop.delta/1000;
+      saw.x=this.player.x+Math.cos(angle)*orbitRadius;
+      saw.y=this.player.y+Math.sin(angle)*orbitRadius;
+
+      // Damage zombies it touches
+      this.zombies.children.entries.forEach(z=>{
+        const zombie=z as Phaser.GameObjects.Sprite;
+        if(!zombie.active||zombie.getData('isBoss')) return;
+        const dx=zombie.x-saw.x, dy=zombie.y-saw.y;
+        if(Math.sqrt(dx*dx+dy*dy)<20){
+          this.damageZombie(zombie,20);
+        }
+      });
+    });
+
+    // Saw lasts 4 seconds
+    this.time.delayedCall(4000,()=>{
+      saw.destroy();
+    });
+  }
+
+  /** Tesla placement */
+  private placeTesla(){
+    if(this.teslaPlaced) return;
+    const coil=this.add.sprite(this.player.x,this.player.y,'tesla');
+    coil.setScale(0.3); // make coil very small
+    coil.setDepth(4);
+    this.teslaPlaced=true;
+
+    const blast=()=>{
+      const zombies=this.zombies.getChildren().filter(z=>z.active) as Phaser.GameObjects.Sprite[];
+      // sort by distance
+      zombies.sort((a,b)=>{
+        const da=Phaser.Math.Distance.Between(a.x,a.y,coil.x,coil.y);
+        const db=Phaser.Math.Distance.Between(b.x,b.y,coil.x,coil.y);
+        return da-db;
+      });
+      let killed = 0;
+      zombies.forEach(z => {
+        if (killed >= 1) return; // kill only one enemy per blast
+        if (z.getData('isBoss')) return; // ignore bosses entirely
+
+        // instakill regular / gunner
+        this.damageZombie(z, 999);
+        killed++;
+      });
+      // optional lightning visual
+    };
+
+    this.time.addEvent({delay:3000,callback:blast,loop:true});
+  }
+
+  /** Spawn fourth boss (rock thrower) */
+  private spawnFourthBoss(){
+    this.fourthBossSpawned = true;
+
+    const x=Phaser.Math.Between(50,this.cameras.main.width-50);
+    const y=Phaser.Math.Between(50,this.cameras.main.height-50);
+    const boss=this.physics.add.sprite(x,y,'boss4');
+    boss.setScale(1.6);
+    boss.setDepth(6);
+    this.zombies.add(boss);
+
+    boss.setData('isBoss',true);
+    boss.setData('bossLevel',4);
+    boss.setData('health',300);
+    boss.setData('maxHealth',300);
+
+    const timer=this.time.addEvent({delay:800,callback:()=>this.bossThrowRock(boss),loop:true});
+    boss.setData('shootTimer',timer);
+    boss.on('destroy',()=>timer.remove(false));
+  }
+
+  private bossThrowRock(boss:Phaser.GameObjects.Sprite){
+    if(!boss.active) return;
+    const rock=this.add.sprite(boss.x,boss.y,'rock');
+    this.physics.add.existing(rock);
+    this.enemyBullets.add(rock);
+    rock.setData('isBossRock',true);
+    rock.setDepth(5);
+    const speed=400;
+    const dx=this.player.x-boss.x;
+    const dy=this.player.y-boss.y;
+    const dist=Math.sqrt(dx*dx+dy*dy)||1;
+    (rock.body as Phaser.Physics.Arcade.Body).setVelocity((dx/dist)*speed,(dy/dist)*speed);
   }
 }
