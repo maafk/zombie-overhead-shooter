@@ -73,7 +73,7 @@ export class MenuScene extends Scene {
       scores = [];
     }
 
-    const title = this.add.text(width - 150, height * 0.25, 'LEADERBOARD', {
+    this.add.text(width - 150, height * 0.25, 'LEADERBOARD', {
       fontSize: '32px',
       color: '#ffffff'
     }).setOrigin(0.5);

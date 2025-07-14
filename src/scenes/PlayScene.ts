@@ -661,7 +661,7 @@ export class PlayScene extends Scene {
     const dmg = bullet.getData && bullet.getData('damage') != null ? bullet.getData('damage') : 20;
 
     // Remove only the zombie, let bullet continue through
-    const destroyed = this.damageZombie(zombie as Phaser.GameObjects.Sprite, dmg);
+    this.damageZombie(zombie as Phaser.GameObjects.Sprite, dmg);
     // Scoring now handled inside damageZombie
 
     // Handle bouncy bullet hit counts
