@@ -518,6 +518,9 @@ export class PlayScene extends Scene {
     this.physics.add.existing(bullet);
     this.bullets.add(bullet);
 
+    // Set bullet damage for normal weapon
+    bullet.setData('damage', 10);
+
     // Set bullet velocity in the facing direction
     const bulletSpeed = 600;
     const bulletBody = bullet.body as Phaser.Physics.Arcade.Body;
@@ -654,8 +657,11 @@ export class PlayScene extends Scene {
   }
 
   private bulletHitZombie(bullet: any, zombie: any) {
+    // Determine damage based on bullet data (defaults to 20)
+    const dmg = bullet.getData && bullet.getData('damage') != null ? bullet.getData('damage') : 20;
+
     // Remove only the zombie, let bullet continue through
-    const destroyed = this.damageZombie(zombie as Phaser.GameObjects.Sprite, 20);
+    const destroyed = this.damageZombie(zombie as Phaser.GameObjects.Sprite, dmg);
     // Scoring now handled inside damageZombie
 
     // Handle bouncy bullet hit counts
@@ -1420,8 +1426,23 @@ export class PlayScene extends Scene {
       });
       let killed = 0;
       zombies.forEach(z => {
-        if (killed >= 1) return; // kill only one enemy per blast
+        if (killed >= 2) return; // kill up to two enemies per blast
         if (z.getData('isBoss')) return; // ignore bosses entirely
+
+        // Draw yellow laser from coil to target zombie
+        const laser = this.add.graphics();
+        laser.lineStyle(4, 0xffff00); // yellow
+        laser.beginPath();
+        laser.moveTo(coil.x, coil.y);
+        laser.lineTo(z.x, z.y);
+        laser.strokePath();
+        // Fade out and destroy laser quickly to simulate beam flash
+        this.tweens.add({
+          targets: laser,
+          alpha: 0,
+          duration: 200,
+          onComplete: () => laser.destroy()
+        });
 
         // instakill regular / gunner
         this.damageZombie(z, 999);
@@ -1446,8 +1467,8 @@ export class PlayScene extends Scene {
 
     boss.setData('isBoss',true);
     boss.setData('bossLevel',4);
-    boss.setData('health',300);
-    boss.setData('maxHealth',300);
+    boss.setData('health',500);
+    boss.setData('maxHealth',500);
 
     const timer=this.time.addEvent({delay:800,callback:()=>this.bossThrowRock(boss),loop:true});
     boss.setData('shootTimer',timer);
