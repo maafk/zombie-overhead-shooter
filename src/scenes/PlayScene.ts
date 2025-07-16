@@ -68,17 +68,26 @@ export class PlayScene extends Scene {
   private pauseSaveButton?: Phaser.GameObjects.Text;
   private slotButtons?: Phaser.GameObjects.Text[];
   private pendingLoadSlot?: number;
+  // --- Sandbox flags ---
+  private isSandbox = false;
+  private sandboxInitialScore = 0;
 
   constructor() {
     super("play");
   }
 
   /** Receive data when scene starts */
-  init(data: { loadSlot?: number }) {
+  init(data: { loadSlot?: number; sandbox?: boolean; initialScore?: number }) {
     if (data && typeof data.loadSlot === 'number') {
       this.pendingLoadSlot = data.loadSlot;
     } else {
       this.pendingLoadSlot = undefined;
+    }
+
+    // Sandbox parameters
+    this.isSandbox = data?.sandbox === true;
+    if (this.isSandbox) {
+      this.sandboxInitialScore = data?.initialScore ?? 0;
     }
   }
 
@@ -145,7 +154,7 @@ export class PlayScene extends Scene {
     };
 
     // Reset score on (re)start
-    this.score = 0;
+    this.score = this.isSandbox ? this.sandboxInitialScore : 0;
 
     // Reset kill counters and boss flags for a fresh session
     this.zombieKillCount = 0;
@@ -156,7 +165,7 @@ export class PlayScene extends Scene {
     this.boss3Defeated = false;
 
     // Create score text
-    this.scoreText = this.add.text(16, 16, 'Score: 0', {
+    this.scoreText = this.add.text(16, 16, 'Score: ' + this.score, {
       fontSize: '32px',
       color: '#ffffff'
     });
@@ -166,6 +175,25 @@ export class PlayScene extends Scene {
       fontSize: '24px',
       color: '#ffffff'
     });
+
+    // If sandbox mode, unlock all special weapons immediately
+    if (this.isSandbox) {
+      this.bouncyUnlocked = true;
+      this.swordUnlocked = true;
+      this.sawUnlocked = true;
+      this.teslaUnlocked = true;
+
+      // Auto-spawn appropriate boss based on starting score
+      if (!this.fourthBossSpawned && this.score >= 4000) {
+        this.spawnFourthBoss();
+      } else if (!this.thirdBossSpawned && this.score >= 300) {
+        this.spawnThirdBoss();
+      } else if (!this.secondBossSpawned && this.score >= 200) {
+        this.spawnSecondBoss();
+      } else if (!this.bossSpawned && this.score >= 100) {
+        this.spawnBoss();
+      }
+    }
 
     // Reset health on (re)start and create health bar
     this.playerHealth = this.playerMaxHealth;
@@ -520,6 +548,8 @@ export class PlayScene extends Scene {
 
     // Set bullet damage for normal weapon
     bullet.setData('damage', 10);
+    // Tag bullet with originating weapon so we can apply boss-specific scaling
+    bullet.setData('weaponType', WeaponType.NORMAL);
 
     // Set bullet velocity in the facing direction
     const bulletSpeed = 600;
@@ -539,6 +569,7 @@ export class PlayScene extends Scene {
       const bullet = this.add.circle(this.player.x, this.player.y, 4, 0xffa500); // orange bullets
       this.physics.add.existing(bullet);
       this.bullets.add(bullet);
+      bullet.setData('weaponType', WeaponType.SPREAD);
       
       const shootAngle = this.facingAngle + angleOffset;
       const bulletBody = bullet.body as Phaser.Physics.Arcade.Body;
@@ -554,6 +585,7 @@ export class PlayScene extends Scene {
     const bullet = this.add.circle(this.player.x, this.player.y, 10, 0x00ffff);
     this.physics.add.existing(bullet);
     this.bullets.add(bullet);
+    bullet.setData('weaponType', WeaponType.THICK);
 
     // Set bullet velocity in the facing direction (slower than normal)
     const bulletSpeed = 400;
@@ -574,6 +606,7 @@ export class PlayScene extends Scene {
       const bullet = this.add.circle(this.player.x, this.player.y, 3, 0xff00ff); // magenta bullets
       this.physics.add.existing(bullet);
       this.bullets.add(bullet);
+      bullet.setData('weaponType', WeaponType.RING);
       
       const bulletBody = bullet.body as Phaser.Physics.Arcade.Body;
       bulletBody.setVelocity(
@@ -618,7 +651,8 @@ export class PlayScene extends Scene {
           // We check if zombie is between previous radius and current radius
           if (distance <= currentRadius && distance >= previousRadius - 10) {
             hitZombies.add(zombie);
-            this.damageZombie(zombieGO, 20);
+            const dmg = (zombieGO.getData('bossLevel') === 4) ? 33.33 : 20; // 15 hits against Boss 4
+            this.damageZombie(zombieGO, dmg);
             // Scoring now handled inside damageZombie
           }
         });
@@ -657,8 +691,30 @@ export class PlayScene extends Scene {
   }
 
   private bulletHitZombie(bullet: any, zombie: any) {
-    // Determine damage based on bullet data (defaults to 20)
-    const dmg = bullet.getData && bullet.getData('damage') != null ? bullet.getData('damage') : 20;
+    // Base damage is whatever the bullet reports (defaults to 20)
+    let dmg = (bullet.getData && bullet.getData('damage') != null) ? bullet.getData('damage') : 20;
+
+    // If target is Boss 4 we override damage so that specific numbers of hits are required
+    const bossLevel = (zombie as Phaser.GameObjects.Sprite).getData('bossLevel');
+    if (bossLevel === 4) {
+      const wType = bullet.getData && bullet.getData('weaponType');
+      switch (wType) {
+        case WeaponType.NORMAL:
+        case WeaponType.SPREAD:
+        case WeaponType.RING:
+        case WeaponType.BOUNCY:
+          dmg = 20; // 25 hits (500 HP / 20)
+          break;
+        case WeaponType.THICK:
+          dmg = 50; // 10 hits
+          break;
+        case WeaponType.SOLID_RING:
+          dmg = 33.33; // ≈15 hits
+          break;
+        default:
+          dmg = 0; // e.g. Saw or unknown – no damage
+      }
+    }
 
     // Remove only the zombie, let bullet continue through
     this.damageZombie(zombie as Phaser.GameObjects.Sprite, dmg);
@@ -1176,6 +1232,7 @@ export class PlayScene extends Scene {
     body.onWorldBounds = true;
 
     bullet.setData('isBouncy', true);
+    bullet.setData('weaponType', WeaponType.BOUNCY);
     bullet.setData('hits', 0);
   }
 
@@ -1349,7 +1406,10 @@ export class PlayScene extends Scene {
         // allow 40 deg to either side of blade (narrower than sweep)
         if (Math.abs(diff) <= Math.PI / 4) {
           hitZombies.add(zombie);
-          const damage = zombie.getData('isBoss') ? 30 : 25;
+          let damage = zombie.getData('isBoss') ? 30 : 25;
+          if (zombie.getData('bossLevel') === 4) {
+            damage = 50; // 10 sword hits to kill Boss 4 (500 HP / 50)
+          }
           this.damageZombie(zombie, damage);
         }
       });

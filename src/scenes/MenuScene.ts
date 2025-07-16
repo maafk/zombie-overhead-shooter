@@ -60,6 +60,22 @@ export class MenuScene extends Scene {
 
     // Leaderboard display
     this.displayLeaderboard();
+
+    // Sandbox Button
+    const sandboxBtn = this.add.text(width / 2, height * 0.85, 'SANDBOX', {
+      fontSize: '36px',
+      color: '#ff00ff',
+      backgroundColor: '#000000',
+      padding: { left: 20, right: 20, top: 10, bottom: 10 }
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+    sandboxBtn.on('pointerdown', () => {
+      const rawScore = window.prompt('Enter starting score (0-5000):', '0');
+      if (rawScore === null) return; // user cancelled
+      const parsed = parseInt(rawScore, 10);
+      const initialScore = isNaN(parsed) ? 0 : Phaser.Math.Clamp(parsed, 0, 5000);
+      this.scene.start('play', { sandbox: true, initialScore });
+    });
   }
 
   /** Load leaderboard and render top 5 on right side */
