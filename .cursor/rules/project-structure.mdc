@@ -1,0 +1,64 @@
+---
+alwaysApply: true
+description: Overview of muh-game project structure and extension guidelines
+---
+# Project Structure & Extension Guide
+
+This rule explains the role of every major source file under `src/constants`, `src/logic`, and `src/scenes`, and sketches the recommended steps when adding new gameplay features.  
+It is **always applied** so the AI has immediate architectural context.
+
+## Constants
+
+* [WeaponType.ts](mdc:src/constants/WeaponType.ts) – Central enum of all weapon identifiers.  
+  • **Extend**: Append a new enum value whenever you introduce a weapon; update `WeaponSystem` + UI accordingly.
+
+## Core Logic Modules (in load order)
+
+| Module | Responsibility |
+| --- | --- |
+| [PlayerController.ts](mdc:src/logic/PlayerController.ts) | Creates & updates the player sprite, handles input, movement, rotation, health/shield logic, damage application, and renders the HUD health bars. |
+| [ZombieManager.ts](mdc:src/logic/ZombieManager.ts) | Spawns normal & gunner zombies, drives simple chase AI, tracks kills, and reports kill counts back to other systems. |
+| [WeaponSystem.ts](mdc:src/logic/WeaponSystem.ts) | Governs weapon switching, cooldowns, projectile/bullet creation, and bullet–enemy collision callbacks. |
+| [BossManager.ts](mdc:src/logic/BossManager.ts) | Manages all four bosses: spawn conditions, AI, attacks, health tracking, rewards, and defeated-state persistence. |
+| [PowerupManager.ts](mdc:src/logic/PowerupManager.ts) | Handles medkits, shield pickups, Tesla coil placement/attacks, and any future power-ups. |
+| [UIManager.ts](mdc:src/logic/UIManager.ts) | Renders score, current weapon label, pause overlay, save-slot UI, and other on-screen text. |
+| [SaveLoadService.ts](mdc:src/logic/SaveLoadService.ts) | Serialises/deserialises persistent game state to `localStorage`; guarantees backward compatibility. |
+
+All logic classes receive a reference to the active Phaser `Scene` from `PlayScene` and expose `create()` / `update()` hooks or callback setters so they stay decoupled.
+
+## Scenes
+
+* [MenuScene.ts](mdc:src/scenes/MenuScene.ts) – Main menu; lets the player choose save slots & modes.
+* [PlayScene.ts](mdc:src/scenes/PlayScene.ts) – Lightweight orchestrator that instantiates the logic modules in `create()` and forwards its `update()` cycle to each module. **No game rules live here**.
+
+---
+
+## How to Add New Features
+
+### 1. New Weapon
+1. Append enum value in `WeaponType.ts`.
+2. Implement firing behaviour in `WeaponSystem.ts` (cooldown, projectile, collision).  
+   • For complex visuals, place helper classes in `src/logic/weapons/` (create folder).
+3. Update `UIManager` to display name & ammo if needed.
+4. Add save logic (if persistent) in `SaveLoadService`.
+
+### 2. New Boss
+1. Create boss class inside `src/logic/bosses/` and register it in `BossManager.ts`.
+2. Define spawn condition & rewards inside `BossManager`.
+3. Draw health bar via `UIManager` hooks.
+4. Persist defeated state in `SaveLoadService`.
+
+### 3. New Power-Up
+1. Extend `PowerupManager.ts` with pickup creation & overlap handler.
+2. If it affects player stats, expose a method on `PlayerController`.
+3. Add any temporary UI cues via `UIManager`.
+
+### 4. UI Changes
+Edit `UIManager` only – other modules should not instantiate text objects directly.
+
+### 5. Save Data Schema Change
+*Always* update both `saveGame()` and `loadGame()` paths in `SaveLoadService.ts` and include legacy fallbacks.
+
+---
+**Workflow Reminder**  
+Follow the incremental migration strategy laid out in [refactor-play-scene.md](mdc:docs/implementation-plan/refactor-play-scene.md): small vertical slices, compile & play-test after each change.

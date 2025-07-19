@@ -14,7 +14,7 @@ A fast-paced 2D zombie shooter game built with Phaser 3, TypeScript, and Vite. F
 ## Weapons Arsenal
 
 1. **Normal (Key 1)** - Standard yellow bullets with balanced fire rate
-2. **Spread (Key 2)** - Orange shotgun-style spread shots  
+2. **Spread (Key 2)** - Orange shotgun-style spread shots
 3. **Thick (Key 3)** - Large cyan bullets with high impact
 4. **Ring (Key 4)** - Magenta bullets firing in all directions
 5. **Solid Ring (Key 5)** - Expanding green ring for close combat
@@ -48,8 +48,8 @@ npm --version
 ### 1. Clone the Repository
 
 ```bash
-git clone <your-repository-url>
-cd muh-game
+git clone git@github.com:maafk/zombie-overhead-shooter.git
+cd zombie-overhead-shooter
 ```
 
 ### 2. Install Dependencies
@@ -69,17 +69,20 @@ The game will be available at `http://localhost:5173` (or the port shown in your
 ## Game Controls
 
 ### Movement & Aiming
+
 - **Arrow Keys**: Move your character and change facing direction
 - **Mouse**: Not used (keyboard-only controls)
 
 ### Combat
+
 - **Spacebar**: Shoot in the direction you're facing
 - **Number Keys 1-5**: Switch between weapon types
 
 ### Weapon Selection
+
 - **1**: Normal bullets
 - **2**: Spread shot
-- **3**: Thick bullets  
+- **3**: Thick bullets
 - **4**: Ring burst
 - **5**: Solid ring
 
@@ -94,6 +97,7 @@ The game will be available at `http://localhost:5173` (or the port shown in your
 ## Development
 
 ### Project Structure
+
 ```
 src/
 ├── main.ts          # Game initialization and configuration
@@ -104,12 +108,14 @@ src/
 ```
 
 ### Technologies Used
+
 - **Phaser 3**: Game framework
 - **TypeScript**: Type-safe JavaScript
 - **Vite**: Fast development server and build tool
 - **HTML5 Canvas**: Rendering engine
 
 ### Available Scripts
+
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
 - `npm run preview` - Preview production build
@@ -132,4 +138,5 @@ This project is open source and available under the [MIT License](LICENSE).
 
 ---
 
-**Have fun surviving the zombie apocalypse!** 🎮 
+**Have fun surviving the zombie apocalypse!** 🎮
+
