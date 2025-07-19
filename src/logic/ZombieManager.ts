@@ -44,6 +44,11 @@ export class ZombieManager {
       const distance = Math.sqrt(dx * dx + dy * dy) || 1;
       const speed = 100;
       body.setVelocity((dx / distance) * speed, (dy / distance) * speed);
+
+      // Rotate zombie to face the direction it is moving (toward the player)
+      // Using the same convention as PlayerController: sprite initially faces right (positive X)
+      // so we can directly use Math.atan2(dy, dx).
+      zombie.setRotation(Math.atan2(dy, dx));
     });
   }
 
@@ -129,6 +134,10 @@ export class ZombieManager {
     const dx = this.player.x - gunner.x;
     const dy = this.player.y - gunner.y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+    // Rotate gunner to face the player (direction of the shot)
+    gunner.setRotation(Math.atan2(dy, dx));
+
     const body = bullet.body as Phaser.Physics.Arcade.Body;
     body.setVelocity((dx / dist) * bulletSpeed, (dy / dist) * bulletSpeed);
   }

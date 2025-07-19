@@ -385,6 +385,11 @@ export class BossManager {
       boss.x = centerX + Math.cos(angle) * radius;
       boss.y = centerY + Math.sin(angle) * radius;
 
+      // Rotate the boss to face the direction it is moving along the orbit.
+      // Tangent vector direction depends on sign of angular speed.
+      const rotation = angle + (speed >= 0 ? Math.PI / 2 : -Math.PI / 2);
+      boss.setRotation(rotation);
+
       const body = boss.body as Phaser.Physics.Arcade.Body;
       if (body) {
         body.x = boss.x - body.width / 2;
