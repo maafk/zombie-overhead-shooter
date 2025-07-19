@@ -26,8 +26,7 @@ export class PlayScene extends Scene {
   private scoreText!: Phaser.GameObjects.Text;
   private weaponText!: Phaser.GameObjects.Text;
   // facingAngle handled via PlayerController
-  private playerMaxHealth = 100;
-  private playerHealth = 100;
+  // Health & shield now handled entirely by PlayerController
   // --- Shield related ---
   // player shield charges handled by PlayerController
   // blockShieldIndicator removed – handled by PlayerController
@@ -36,8 +35,7 @@ export class PlayScene extends Scene {
   private isSandbox = false;
   private sandboxInitialScore = 0;
 
-  private playerMaxShield = 100;
-  private playerShield = 0;
+  // Max shield capacity tracked in PlayerController, not locally
 
   // Track zombie kills to grant shield every 20 kills
   private zombieKillCount = 0;
@@ -102,15 +100,16 @@ export class PlayScene extends Scene {
     // Bullet group remains local to scene; zombies handled by manager
     this.bullets = this.physics.add.group();
 
-    // Instantiate WeaponSystem (handles cooldowns & bullet creation)
-    this.weaponSystem = new WeaponSystem(this, this.player, this.bullets, () => this.playerController.getFacingAngle(), this.zombies, (z,d)=>this.damageZombie(z,d));
-
     // Instantiate ZombieManager (handles its own groups)
     this.zombieManager = new ZombieManager(this, this.player);
     this.zombies = this.zombieManager.getZombies();
     this.enemyBullets = this.zombieManager.getEnemyBullets();
     this.medkits = this.zombieManager.getMedkits();
     this.shields = this.zombieManager.getShields();
+
+    // Instantiate WeaponSystem (handles cooldowns & bullet creation) after zombies exists
+    this.weaponSystem = new WeaponSystem(this, this.player, this.bullets, () => this.playerController.getFacingAngle(), this.zombies, (z,d)=>this.damageZombie(z,d));
+
     // Instantiate PowerupManager for medkits & shields
     this.powerupManager = new PowerupManager(this, this.playerController, this.medkits, this.shields, this.zombies);
     this.bossManager = new BossManager(this, this.player, this.zombies, this.enemyBullets);
@@ -509,9 +508,9 @@ export class PlayScene extends Scene {
 
     const data = {
       score: this.score,
-      playerHealth: this.playerHealth,
-      playerShield: this.playerShield,
-      playerMaxShield: this.playerMaxShield,
+      playerHealth: this.playerController.getHealth(),
+      playerShield: this.playerController.getShield(),
+      playerMaxShield: this.playerController.getMaxShield(),
       zombieKillCount: this.zombieKillCount,
       bouncyUnlocked: this.bouncyUnlocked,
       swordUnlocked: this.swordUnlocked,
@@ -543,9 +542,11 @@ export class PlayScene extends Scene {
       this.score = data.score ?? 0;
       this.scoreText.setText('Score: ' + this.score);
 
-      this.playerHealth = data.playerHealth ?? this.playerMaxHealth;
-      this.playerShield = data.playerShield ?? 0;
-      this.playerMaxShield = data.playerMaxShield ?? 100;
+      // Restore player stats via PlayerController
+      const health = data.playerHealth ?? 100;
+      const shield = data.playerShield ?? 0;
+      const maxShield = data.playerMaxShield ?? 100;
+      this.playerController.loadState(health, shield, maxShield);
       this.zombieKillCount = data.zombieKillCount ?? 0;
       this.bouncyUnlocked = data.bouncyUnlocked ?? false;
       this.swordUnlocked = data.swordUnlocked ?? false;
@@ -560,7 +561,7 @@ export class PlayScene extends Scene {
         boss4Defeated: data.boss4Defeated ?? false
       });
 
-      this.updateHealthBar();
+      // Bars are updated within PlayerController.loadState()
 
       // TODO: Handle restoring alive bosses with saved health
       // This requires BossManager to expose methods for spawning specific bosses with health

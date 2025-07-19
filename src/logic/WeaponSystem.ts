@@ -133,6 +133,9 @@ export class WeaponSystem {
     const centerY = this.player.y;
     const hitSet = new Set<Phaser.GameObjects.Sprite>();
     let frameSkip = 0;
+    let debugCounter = 0;
+    const startTime = performance.now();
+    let totalIterations=0;
 
     this.scene.tweens.add({
       targets: ring,
@@ -142,6 +145,11 @@ export class WeaponSystem {
       onUpdate: () => {
         frameSkip++;
         if (frameSkip % 3 !== 0) return; // throttle checks
+
+        debugCounter++;
+        if(debugCounter % 10 === 0){
+          console.log(`[SolidRing] radius=${ring.radius.toFixed(1)} zombies=${this.zombies.countActive()} frame=${frameSkip}`);
+        }
 
         const cur = ring.radius as number;
         this.zombies.children.entries.forEach(z => {
@@ -154,10 +162,14 @@ export class WeaponSystem {
             hitSet.add(zombie);
             const dmg = zombie.getData('bossLevel') === 4 ? 33.33 : 20;
             this.damageCallback(zombie, dmg);
+            totalIterations++;
           }
         });
       },
-      onComplete: () => ring.destroy()
+      onComplete: () => {
+        ring.destroy();
+        console.log(`[SolidRing] finished. frames=${frameSkip} hits=${hitSet.size} iter=${totalIterations} time=${(performance.now()-startTime).toFixed(1)}ms`);
+      }
     });
   }
 

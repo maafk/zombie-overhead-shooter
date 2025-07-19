@@ -17,6 +17,27 @@ export class PlayerController {
 
   private facingAngle = 0; // radians
 
+  // Add getters and a state setter for external use
+  /** Current shield value (blue bar) */
+  getShield() {
+    return this.playerShield;
+  }
+
+  /** Current maximum shield capacity */
+  getMaxShield() {
+    return this.playerMaxShield;
+  }
+
+  /**
+   * Restore player stats from a saved game. Values are clamped to their maximums.
+   */
+  loadState(health: number, shield: number, maxShield: number) {
+    this.playerMaxShield = maxShield;
+    this.playerShield = Phaser.Math.Clamp(shield, 0, this.playerMaxShield);
+    this.playerHealth = Phaser.Math.Clamp(health, 0, this.playerMaxHealth);
+    this.updateHealthBar();
+  }
+
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
 
