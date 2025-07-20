@@ -14,6 +14,8 @@ export class WeaponSystem {
   private lastShotTime = 0;
   private damageCallback: (zombie: Phaser.GameObjects.Sprite, amount:number)=>void;
   private bullets: Phaser.Physics.Arcade.Group;
+  private activeTesla?: Phaser.GameObjects.Sprite;
+  private activeSaw?: Phaser.GameObjects.Sprite;
 
   constructor(
     scene: Phaser.Scene,
@@ -186,7 +188,109 @@ export class WeaponSystem {
     b.setData('isBouncy', true); b.setData('weaponType', WeaponType.BOUNCY); b.setData('hits',0);
   }
 
-  private shootSword() {/* TODO: keep sword logic inside PlayScene for now */}
-  private shootSaw() {/* TODO: keep saw logic inside PlayScene for now */}
-  private placeTesla() {/* TODO */}
+  private shootSword() {
+    // Short-range melee swipe: create a temporary hitbox in front of the player
+    const angle = this.getFacingAngleFn();
+    const offset = 40; // distance from player centre
+    const x = this.player.x + Math.cos(angle) * offset;
+    const y = this.player.y + Math.sin(angle) * offset;
+
+    const sword = this.scene.add.sprite(x, y, 'sword');
+    sword.setRotation(angle);
+    this.scene.physics.add.existing(sword);
+    this.bullets.add(sword);
+    const body = sword.body as Phaser.Physics.Arcade.Body;
+    // Make the sword hitbox a bit larger than sprite
+    body.setCircle(20);
+    body.setAllowGravity(false);
+    sword.setData('damage', 30);
+    sword.setData('weaponType', WeaponType.SWORD);
+
+    // Destroy after a short duration so it can hit multiple enemies within the window
+    this.scene.time.addEvent({ delay: 150, callback: () => sword.destroy() });
+  }
+
+  private shootSaw() {
+    // Only one saw allowed at a time
+    if (this.activeSaw && this.activeSaw.active) {
+      return;
+    }
+
+    // Create a saw that revolves around the player 3 times and then disappears
+    const revolutions = 3;
+    const radius = 100;
+    const durationPerRev = 1000; // 1 second per revolution
+    const totalDuration = revolutions * durationPerRev;
+
+    const saw = this.scene.add.sprite(this.player.x, this.player.y, 'saw');
+    saw.setOrigin(0.5);
+    this.scene.physics.add.existing(saw);
+    this.bullets.add(saw);
+    const body = saw.body as Phaser.Physics.Arcade.Body;
+    body.setCircle(24);
+    body.setAllowGravity(false);
+    saw.setData('damage', 999); // one-shot regular zombies
+    saw.setData('weaponType', WeaponType.SAW);
+
+    this.activeSaw = saw;
+
+    // Use a tween counter to update angle around the player
+    this.scene.tweens.addCounter({
+      from: 0,
+      to: Math.PI * 2 * revolutions,
+      duration: totalDuration,
+      onUpdate: tween => {
+        const value = tween.getValue() as number; // getValue may return null in typings
+        const sx = this.player.x + Math.cos(value) * radius;
+        const sy = this.player.y + Math.sin(value) * radius;
+        saw.setPosition(sx, sy);
+        body.reset(sx, sy);
+      },
+      onComplete: () => {
+        saw.destroy();
+        if (this.activeSaw === saw) {
+          this.activeSaw = undefined;
+        }
+      }
+    });
+  }
+
+  private placeTesla() {
+    // Only one coil allowed at a time
+    if (this.activeTesla && this.activeTesla.active) {
+      return;
+    }
+
+    const coil = this.scene.add.sprite(this.player.x, this.player.y, 'tesla');
+    coil.setOrigin(0.5);
+    this.scene.physics.add.existing(coil);
+    (coil.body as Phaser.Physics.Arcade.Body).setImmovable(true);
+    coil.setData('isTesla', true);
+    this.activeTesla = coil;
+
+    // Periodically zap nearby zombies
+    const zapRadius = 150;
+    const zapDamage = 20;
+    const interval = 500; // ms
+
+    this.scene.time.addEvent({
+      delay: interval,
+      loop: true,
+      callback: () => {
+        if (!coil.active) return; // coil might have been destroyed in future versions
+        this.zombies.children.each(child => {
+          const zombie = child as Phaser.GameObjects.Sprite;
+          if (!zombie.active) return false;
+          const dx = zombie.x - coil.x;
+          const dy = zombie.y - coil.y;
+          const distSq = dx * dx + dy * dy;
+          if (distSq <= zapRadius * zapRadius) {
+            // Apply damage – full damage even to bosses
+            this.damageCallback(zombie, zapDamage);
+          }
+          return false; // satisfy typing: boolean | null
+        });
+      }
+    });
+  }
 } 

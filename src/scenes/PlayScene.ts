@@ -349,25 +349,33 @@ export class PlayScene extends Scene {
     // Base damage is whatever the bullet reports (defaults to 20)
     let dmg = (bullet.getData && bullet.getData('damage') != null) ? bullet.getData('damage') : 20;
 
-    // If target is Boss 4 we override damage so that specific numbers of hits are required
-    const bossLevel = (zombie as Phaser.GameObjects.Sprite).getData('bossLevel');
-    if (bossLevel === 4) {
-      const wType = bullet.getData && bullet.getData('weaponType');
-      switch (wType) {
-        case WeaponType.NORMAL:
-        case WeaponType.SPREAD:
-        case WeaponType.RING:
-        case WeaponType.BOUNCY:
-          dmg = 20; // 25 hits (500 HP / 20)
-          break;
-        case WeaponType.THICK:
-          dmg = 50; // 10 hits
-          break;
-        case WeaponType.SOLID_RING:
-          dmg = 33.33; // ≈15 hits
-          break;
-        default:
-          dmg = 0; // e.g. Saw or unknown – no damage
+    const isBoss = (zombie as Phaser.GameObjects.Sprite).getData('isBoss') === true;
+
+    const wType = bullet.getData && bullet.getData('weaponType');
+
+    // Special damage rules
+    if (wType === WeaponType.SAW) {
+      // Saw one-shots regular zombies but does nothing to bosses
+      dmg = isBoss ? 0 : 999;
+    } else {
+      const bossLevel = (zombie as Phaser.GameObjects.Sprite).getData('bossLevel');
+      if (bossLevel === 4) {
+        switch (wType) {
+          case WeaponType.NORMAL:
+          case WeaponType.SPREAD:
+          case WeaponType.RING:
+          case WeaponType.BOUNCY:
+            dmg = 20; // 25 hits (500 HP / 20)
+            break;
+          case WeaponType.THICK:
+            dmg = 50; // 10 hits
+            break;
+          case WeaponType.SOLID_RING:
+            dmg = 33.33; // ≈15 hits
+            break;
+          default:
+            dmg = 0; // no damage
+        }
       }
     }
 
